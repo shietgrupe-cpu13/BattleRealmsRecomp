@@ -7,7 +7,7 @@ Updated 2026-11-27.
 - Repository visibility: public, changed only after auditing the full one-commit history and README.
 - Runner policy: GitHub-hosted `ubuntu-latest` only; no paid or self-hosted runner configured.
 - Workflow branch: `ci/android-static-recompilation`.
-- Latest workflow code tested: `cdf461d80ad7ca1f5174134dbe935a2a7a7579ae` (separates the Capstone source and build-cache paths). Current branch HEAD is `133eb71` (documentation-only follow-up); initial workflow commit: `e187ef087889262b18b2c7e359c4d04652b52a32`.
+- Latest workflow code tested: `cdf461d80ad7ca1f5174134dbe935a2a7a7579ae` (separates the Capstone source and build-cache paths). Current branch HEAD is `57bae7f` (documentation-only follow-up); initial workflow commit: `e187ef087889262b18b2c7e359c4d04652b52a32`.
 - Current public remote contents do not include BattleRealmsRecomp implementation source.
 
 ## Runs
