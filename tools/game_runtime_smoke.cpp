@@ -97,6 +97,11 @@ br::runtime::Win32FileOpenResult testFileOpener(
 	if (std::string(relativePath) != "startup_profile_test.ini") return {-1, 2u};
 	const int fd = BR_TEST_OPEN("E:\\BattleRealmsRecomp\\analysis\\startup_profile_test.ini", _O_RDONLY | _O_BINARY);
 #else
+	if (std::string(relativePath) == "Battle_Realms_F.exe") {
+		if (!testVirtualExecutableAvailable || !testExecutablePath) return {-1, 2u};
+		const int fd = BR_TEST_OPEN(testExecutablePath, O_RDONLY);
+		return {fd, fd < 0 ? 2u : 0u};
+	}
 	if (std::string(relativePath) != "startup_profile_test.ini") return {-1, 2u};
 	const int fd = BR_TEST_OPEN("analysis/startup_profile_test.ini", O_RDONLY);
 #endif

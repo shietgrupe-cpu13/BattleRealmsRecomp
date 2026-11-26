@@ -10,6 +10,7 @@ build_dir="${BR_HOST_TEST_BUILD_DIR:-${RUNNER_TEMP:-/tmp}/br-host-tests}"
 test -f "$ra3_runtime/guest.h"
 test -f "$game_exe"
 test -d "$scripts_dir"
+mkdir -p "$root/analysis"
 cmake -S "$root/runtime/pe32_loader" -B "$build_dir" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DRA3_RUNTIME_DIR="$ra3_runtime"
 cmake --build "$build_dir" --parallel 2
