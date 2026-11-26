@@ -21,4 +21,4 @@ The workflow does not cache generated guest code or APKs. ccache/Actions caches 
 
 ## Verification status
 
-The remote was audited and made public. On workflow branch `ci/android-static-recompilation`, run `45862794138` passed repository safety checks and RA3's generic differential suite (580/580). The BattleRealms APK job was skipped because the source tree and host regression entry point are absent. No BattleRealms build occurred.
+The remote was audited and made public. Run `45862794138` passed safety checks and RA3 generic differential tests (580/580). Later run `45864439082` exposed a Capstone cache/source path collision (`git clone` exit 128); the cache path/key are corrected, pending a passing rerun. Both runs skipped BattleRealms APK generation because source and host tests are absent. No BattleRealms build occurred.

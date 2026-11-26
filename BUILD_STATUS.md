@@ -17,6 +17,7 @@ Updated 2026-11-27.
 | [45851858872](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45851858872) | Push | Audit passed; Android job skipped | Gitleaks history scan and tracked proprietary-file policy passed. |
 | [45851897234](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45851897234) | Manual dispatch | Audit passed; Android job skipped | Same audit; source preflight found required source tree missing. |
 | [45862794138](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45862794138) | Manual dispatch | Safety and upstream differential passed; APK job skipped | Capstone built; RA3-Native x86-vs-lifted suite passed 580/580; both result streams 1,224,960 bytes. |
+| [45864439082](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45864439082) | Manual dispatch | Differential setup failed; audit passed; APK job skipped | Restored Capstone cache occupied the source-clone destination (`git clone` exit 128). The build directory and v2 cache key are now separated; rerun pending. |
 
 No BattleRealms-specific compilation/lifting, APK, runtime launch, rendering, or gameplay was verified. The 580-case test validates the shared generic lifter suite only.
 

@@ -132,9 +132,9 @@ jobs:
         uses: actions/cache@v4
         with:
           path: |
-            ${{ runner.temp }}/capstone-src/b
+            ${{ runner.temp }}/capstone-build
             ${{ runner.temp }}/ccache
-          key: capstone-x86-${{ runner.os }}-04fd70b5456c20fc27d1f2b62d6ed0820fc6b081
+          key: capstone-diff-build-v2-${{ runner.os }}-04fd70b5456c20fc27d1f2b62d6ed0820fc6b081
 
       - name: Build pinned Capstone and run native-vs-lifted differential suite
         shell: bash
@@ -146,7 +146,7 @@ jobs:
           git -C "$RUNNER_TEMP/RA3-Native" checkout b46328a6ec6f52ce20db61a73e9f7aab3c5b3b90
           git clone https://github.com/capstone-engine/capstone.git "$RUNNER_TEMP/capstone-src"
           git -C "$RUNNER_TEMP/capstone-src" checkout 04fd70b5456c20fc27d1f2b62d6ed0820fc6b081
-          cmake -S "$RUNNER_TEMP/capstone-src" -B "$RUNNER_TEMP/capstone-src/b" -G Ninja \
+          cmake -S "$RUNNER_TEMP/capstone-src" -B "$RUNNER_TEMP/capstone-build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
@@ -154,7 +154,8 @@ jobs:
             -DCAPSTONE_BUILD_SHARED_LIBS=OFF -DCAPSTONE_BUILD_TESTS=OFF \
             -DCAPSTONE_BUILD_CSTOOL=OFF -DCAPSTONE_BUILD_CSTEST=OFF \
             -DCAPSTONE_BUILD_LEGACY_TESTS=OFF
-          cmake --build "$RUNNER_TEMP/capstone-src/b" --parallel 2
+          cmake --build "$RUNNER_TEMP/capstone-build" --parallel 2
+          ln -s "$RUNNER_TEMP/capstone-build" "$RUNNER_TEMP/capstone-src/b"
           CAPSTONE="$RUNNER_TEMP/capstone-src" \
             python3 "$RUNNER_TEMP/RA3-Native/tests/run_tests.py" "$RUNNER_TEMP/ra3-differential"
           ccache -s
@@ -215,7 +216,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ runner.temp }}/capstone-build
-          key: capstone-x86-${{ runner.os }}-04fd70b5456c20fc27d1f2b62d6ed0820fc6b081
+          key: capstone-toolchain-build-v2-${{ runner.os }}-04fd70b5456c20fc27d1f2b62d6ed0820fc6b081
 
       - name: Build pinned RA3 analysis and lifting tools
         shell: bash
