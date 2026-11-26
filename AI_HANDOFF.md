@@ -21,7 +21,9 @@ Updated 2026-11-27 (Asia/Shanghai).
 - Differential run: [45862794138](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45862794138), commit `43ea086`.
 - All runs passed secret scanning and the tracked-file safety check. The differential run also passed RA3-Native's x86-vs-lifted suite: 580/580 cases, with both result streams 1,224,960 bytes. This is generic lifter validation, not Battle Realms execution.
 - Run [45864439082](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45864439082) passed the audit but failed differential setup: a restored Capstone cache occupied the source clone directory. The cache/build path collision has been corrected with an isolated build directory and new cache key; a successful rerun is pending.
+- Runs [45864829031](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45864829031) and [45865017509](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45865017509) pass after that correction. Both pass 580/580 generic RA3 differential cases. The latter reports 18 ccache hits and 18 misses (50% of 36 calls); no wall-time benefit was measured. Both skip the BattleRealms APK job because the public repo still lacks project source.
 - All runs skipped the Battle Realms APK job because this public repository has no recompilation/runtime/Android source tree. No Battle Realms APK or generated game code was produced.
+- The latest run has no BattleRealms runtime milestone: only the safety audit and generic RA3 lifter tests executed. The Android step summary explicitly reports the missing source preflight and confirms that no game files, generated lift output or APK were fetched or published.
 - Local process inspection found no active BattleRealms-related compile or recompilation process to stop.
 
 ## Remaining work

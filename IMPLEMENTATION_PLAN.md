@@ -9,6 +9,6 @@
 7. **Publish privately and test.** Upload APK to a distinct private output repo; install/test on Android; report menu, skirmish, graphics, input, audio, and performance independently.
 8. **Enable nightly releases only after repeated clean builds.** Use a private destination and a reproducible versioning policy. Stable releases require explicit release authority and license review.
 
-## Current stop point
+## Current stop point — updated 2026-11-27
 
-Step 1 is not complete: GitHub contains the bootstrap README, workflow, and status documents, but not the project source. The pinned RA3 differential suite passes 580/580; the BattleRealms build remains skipped until source, its host-test entry point, and private game inputs are available.
+Step 1 is not complete: GitHub contains the bootstrap README, workflow, and status documents, but not the project source. The latest cloud run (45865017509) passed the safety audit and the pinned RA3 differential suite (580/580), then explicitly skipped the BattleRealms APK job because the source preflight failed. The next actionable milestone is a reviewed, license-compliant source snapshot and host-test entry point. Private game-input and APK-output repos/tokens are also not configured. The Windows workspace has existing APKs, but those are not products of the cloud pipeline.
