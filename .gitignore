@@ -1,6 +1,6 @@
 ## Private game inputs and copyrighted/generated game-derived code.
-generated/
-lifted/
+/generated/
+/lifted/
 game/
 gamefiles/
 game_data/
