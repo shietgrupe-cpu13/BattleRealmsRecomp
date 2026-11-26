@@ -97,6 +97,7 @@ jobs:
             android/app/build.gradle
             android/app/src/main/cpp/CMakeLists.txt
             android/app/src/main/AndroidManifest.xml
+            tests/run_host_tests.sh
           )
           missing=()
           for path in "${required[@]}"; do
@@ -118,9 +119,48 @@ jobs:
           echo "source_ready=true" >> "$GITHUB_OUTPUT"
           echo "Complete project source tree detected." >> "$GITHUB_STEP_SUMMARY"
 
+  lifter-differential:
+    name: RA3 lifter x86 differential tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install compiler and 32-bit test-runner tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential ninja-build nasm ccache
+
+      - name: Cache Capstone dependency objects
+        uses: actions/cache@v4
+        with:
+          path: |
+            ${{ runner.temp }}/capstone-src/b
+            ${{ runner.temp }}/ccache
+          key: capstone-x86-${{ runner.os }}-04fd70b5456c20fc27d1f2b62d6ed0820fc6b081
+
+      - name: Build pinned Capstone and run native-vs-lifted differential suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CCACHE_DIR="$RUNNER_TEMP/ccache"
+          export CCACHE_BASEDIR="$RUNNER_TEMP"
+          git clone https://github.com/blackorange-sketch/RA3-Native.git "$RUNNER_TEMP/RA3-Native"
+          git -C "$RUNNER_TEMP/RA3-Native" checkout b46328a6ec6f52ce20db61a73e9f7aab3c5b3b90
+          git clone https://github.com/capstone-engine/capstone.git "$RUNNER_TEMP/capstone-src"
+          git -C "$RUNNER_TEMP/capstone-src" checkout 04fd70b5456c20fc27d1f2b62d6ed0820fc6b081
+          cmake -S "$RUNNER_TEMP/capstone-src" -B "$RUNNER_TEMP/capstone-src/b" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCAPSTONE_ARCHITECTURE_DEFAULT=OFF -DCAPSTONE_X86_SUPPORT=ON \
+            -DCAPSTONE_BUILD_SHARED_LIBS=OFF -DCAPSTONE_BUILD_TESTS=OFF \
+            -DCAPSTONE_BUILD_CSTOOL=OFF -DCAPSTONE_BUILD_CSTEST=OFF \
+            -DCAPSTONE_BUILD_LEGACY_TESTS=OFF
+          cmake --build "$RUNNER_TEMP/capstone-src/b" --parallel 2
+          CAPSTONE="$RUNNER_TEMP/capstone-src" \
+            python3 "$RUNNER_TEMP/RA3-Native/tests/run_tests.py" "$RUNNER_TEMP/ra3-differential"
+          ccache -s
+          echo "The upstream differential suite compares x86 native register/memory/flag results with lifted C++ results; it is not a Battle Realms runtime or gameplay test." >> "$GITHUB_STEP_SUMMARY"
+
   android-arm64:
     name: Lift and build Android ARM64 APK
-    needs: audit
+    needs: [audit, lifter-differential]
     if: needs.audit.outputs.source_ready == 'true' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -139,6 +179,16 @@ jobs:
 
       - name: Install Python analysis dependency
         run: python -m pip install --upgrade pip pefile
+
+      - name: Install native build tools and ccache
+        run: sudo apt-get update && sudo apt-get install -y build-essential ninja-build ccache
+
+      - name: Cache open-source toolchain objects only
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-public-toolchain-${{ runner.os }}-ra3-b46328a6-capstone-04fd70b5
+          restore-keys: ccache-public-toolchain-${{ runner.os }}-
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -169,6 +219,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          export CCACHE_DIR="$RUNNER_TEMP/ccache"
+          export CCACHE_BASEDIR="$RUNNER_TEMP"
           ra3="$RUNNER_TEMP/RA3-Native"
           cap="$RUNNER_TEMP/capstone-src"
           git clone https://github.com/blackorange-sketch/RA3-Native.git "$ra3"
@@ -177,17 +229,20 @@ jobs:
           git -C "$cap" checkout 04fd70b5456c20fc27d1f2b62d6ed0820fc6b081
           cmake -S "$cap" -B "$RUNNER_TEMP/capstone-build" -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DCAPSTONE_ARCHITECTURE_DEFAULT=OFF \
             -DCAPSTONE_X86_SUPPORT=ON \
             -DCAPSTONE_BUILD_SHARED_LIBS=OFF \
             -DCAPSTONE_BUILD_TESTS=OFF -DCAPSTONE_BUILD_CSTOOL=OFF \
             -DCAPSTONE_BUILD_CSTEST=OFF -DCAPSTONE_BUILD_LEGACY_TESTS=OFF
           cmake --build "$RUNNER_TEMP/capstone-build" --parallel 2
-          c++ -O2 -std=c++17 -I"$cap/include" "$ra3/tools/analyze.cpp" \
+          ccache c++ -O2 -std=c++17 -I"$cap/include" "$ra3/tools/analyze.cpp" \
             "$RUNNER_TEMP/capstone-build/libcapstone.a" -o "$RUNNER_TEMP/analyze"
-          c++ -O2 -std=c++17 -I"$cap/include" "$ra3/tools/lift.cpp" \
+          ccache c++ -O2 -std=c++17 -I"$cap/include" "$ra3/tools/lift.cpp" \
             "$ra3/tools/lift_pe.cpp" "$RUNNER_TEMP/capstone-build/libcapstone.a" \
             -o "$RUNNER_TEMP/lift_pe"
+          ccache -s
 
       - name: Fetch private game build inputs into temporary storage
         env:
@@ -201,6 +256,8 @@ jobs:
           : "${INPUT_REPO:?Set BR_GAME_FILES_REPO to owner/repository for the private input repository.}"
           : "${INPUT_RELEASE:?Set BR_GAME_FILES_RELEASE to the private release tag containing battle-realms-inputs.zip.}"
           mkdir -p "$RUNNER_TEMP/private-game-inputs"
+          private_flag=$(GH_TOKEN="$GH_TOKEN" gh api "repos/$INPUT_REPO" --jq .private)
+          [[ "$private_flag" == "true" ]] || { echo "Game-input repository must be private" >&2; exit 1; }
           gh release download "$INPUT_RELEASE" --repo "$INPUT_REPO" \
             --pattern battle-realms-inputs.zip --dir "$RUNNER_TEMP/private-game-inputs"
           unzip -q "$RUNNER_TEMP/private-game-inputs/battle-realms-inputs.zip" \
@@ -249,19 +306,11 @@ jobs:
           test "$(find build/arm64_hybrid96/CMakeFiles/battle_realms_lifted.dir -name '*.o' | wc -l)" -eq 96
           test "$(find build/arm64_rebased_scripts/CMakeFiles/battle_realms_lifted.dir -name '*.o' ! -name 'lifted_table.cpp.o' | wc -l)" -eq 544
 
-      - name: Run host regression tests when provided
+      - name: Run host runtime and compatibility regression tests
         shell: bash
         run: |
           set -euo pipefail
-          if [[ -f tests/run_host_tests.sh ]]; then
-            bash tests/run_host_tests.sh
-          elif [[ -f CMakePresets.json ]] && cmake --list-presets | grep -q host-tests; then
-            cmake --preset host-tests
-            cmake --build --preset host-tests --parallel 2
-            ctest --preset host-tests --output-on-failure
-          else
-            echo "No declared host regression-test entry point; generated ARM64 C++ compilation remains the build validation." | tee -a "$GITHUB_STEP_SUMMARY"
-          fi
+          bash tests/run_host_tests.sh
 
       - name: Build debug APK
         working-directory: android
