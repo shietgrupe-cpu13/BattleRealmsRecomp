@@ -1,0 +1,321 @@
+name: BattleRealmsRecomp Android ARM64
+
+on:
+  push:
+    branches: [main, "ci/**"]
+    paths:
+      - ".github/workflows/android-recomp.yml"
+      - "tools/**"
+      - "runtime/**"
+      - "android/**"
+      - "references/**"
+      - "lifted/**"
+      - "generated/**"
+  pull_request:
+    branches: [main]
+    paths:
+      - ".github/workflows/android-recomp.yml"
+      - "tools/**"
+      - "runtime/**"
+      - "android/**"
+      - "references/**"
+      - "lifted/**"
+      - "generated/**"
+  workflow_dispatch:
+  schedule:
+    # Nightly builds remain disabled until source and private input/output repos exist.
+    - cron: "17 6 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-recomp-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  audit:
+    name: Repository safety and source preflight
+    runs-on: ubuntu-latest
+    outputs:
+      source_ready: ${{ steps.preflight.outputs.source_ready }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Scan history for credentials
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Reject proprietary game files and generated game code in Git
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import subprocess
+          from pathlib import PurePosixPath
+
+          paths = subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\0")
+          paths = [p for p in paths if p]
+          forbidden_exts = {
+              ".exe", ".dll", ".h2o", ".bre", ".dat", ".wav", ".mp3",
+              ".dds", ".tga", ".bmp", ".pak", ".sav",
+          }
+          forbidden_dirs = {"lifted", "generated", "game", "assets", "content"}
+          bad = []
+          for name in paths:
+              path = PurePosixPath(name)
+              if path.suffix.lower() in forbidden_exts:
+                  bad.append(name)
+              if any(part.lower() in forbidden_dirs for part in path.parts):
+                  bad.append(name)
+          if bad:
+              print("::error::Proprietary game data or lifted/generated code must not be committed:")
+              print("\n".join(sorted(set(bad))))
+              raise SystemExit(1)
+          print(f"Tracked-file policy passed ({len(paths)} paths; no game binaries/assets or generated-code directories).")
+          PY
+
+      - name: Check whether a complete project source tree is present
+        id: preflight
+        shell: bash
+        run: |
+          set -euo pipefail
+          required=(
+            tools/recompile.py
+            tools/recompile_scripts_rebased.py
+            tools/rebase_script_dlls.py
+            tools/lift_scripts.py
+            tools/merge_lifted_tables.py
+            tools/patch_generated_x86_compat.py
+            tools/lifted/CMakeLists.txt
+            runtime/pe32_loader/CMakeLists.txt
+            runtime/android_diagnostics.cpp
+            android/settings.gradle
+            android/app/build.gradle
+            android/app/src/main/cpp/CMakeLists.txt
+            android/app/src/main/AndroidManifest.xml
+          )
+          missing=()
+          for path in "${required[@]}"; do
+            [[ -f "$path" ]] || missing+=("$path")
+          done
+          if ((${#missing[@]})); then
+            echo "source_ready=false" >> "$GITHUB_OUTPUT"
+            {
+              echo "## Android build preflight"
+              echo
+              echo "Build skipped: this public repository does not yet contain the BattleRealmsRecomp source tree."
+              echo "Missing required paths:"
+              printf -- '- `%s`\n' "${missing[@]}"
+              echo
+              echo "No game executable, assets, generated lifted code, or APK was fetched or published."
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          echo "source_ready=true" >> "$GITHUB_OUTPUT"
+          echo "Complete project source tree detected." >> "$GITHUB_STEP_SUMMARY"
+
+  android-arm64:
+    name: Lift and build Android ARM64 APK
+    needs: audit
+    if: needs.audit.outputs.source_ready == 'true' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: tools/requirements-ci.txt
+
+      - name: Install Python analysis dependency
+        run: python -m pip install --upgrade pip pefile
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install pinned Android toolchain
+        run: |
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;36.1.0" "cmake;3.22.1" "ndk;28.2.13676358"
+          yes | sdkmanager --licenses >/dev/null
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Cache Capstone source build
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/capstone-build
+          key: capstone-x86-${{ runner.os }}-04fd70b5456c20fc27d1f2b62d6ed0820fc6b081
+
+      - name: Build pinned RA3 analysis and lifting tools
+        shell: bash
+        run: |
+          set -euo pipefail
+          ra3="$RUNNER_TEMP/RA3-Native"
+          cap="$RUNNER_TEMP/capstone-src"
+          git clone https://github.com/blackorange-sketch/RA3-Native.git "$ra3"
+          git -C "$ra3" checkout b46328a6ec6f52ce20db61a73e9f7aab3c5b3b90
+          git clone https://github.com/capstone-engine/capstone.git "$cap"
+          git -C "$cap" checkout 04fd70b5456c20fc27d1f2b62d6ed0820fc6b081
+          cmake -S "$cap" -B "$RUNNER_TEMP/capstone-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCAPSTONE_ARCHITECTURE_DEFAULT=OFF \
+            -DCAPSTONE_X86_SUPPORT=ON \
+            -DCAPSTONE_BUILD_SHARED_LIBS=OFF \
+            -DCAPSTONE_BUILD_TESTS=OFF -DCAPSTONE_BUILD_CSTOOL=OFF \
+            -DCAPSTONE_BUILD_CSTEST=OFF -DCAPSTONE_BUILD_LEGACY_TESTS=OFF
+          cmake --build "$RUNNER_TEMP/capstone-build" --parallel 2
+          c++ -O2 -std=c++17 -I"$cap/include" "$ra3/tools/analyze.cpp" \
+            "$RUNNER_TEMP/capstone-build/libcapstone.a" -o "$RUNNER_TEMP/analyze"
+          c++ -O2 -std=c++17 -I"$cap/include" "$ra3/tools/lift.cpp" \
+            "$ra3/tools/lift_pe.cpp" "$RUNNER_TEMP/capstone-build/libcapstone.a" \
+            -o "$RUNNER_TEMP/lift_pe"
+
+      - name: Fetch private game build inputs into temporary storage
+        env:
+          GH_TOKEN: ${{ secrets.BR_GAME_FILES_TOKEN }}
+          INPUT_REPO: ${{ vars.BR_GAME_FILES_REPO }}
+          INPUT_RELEASE: ${{ vars.BR_GAME_FILES_RELEASE }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          : "${GH_TOKEN:?Set BR_GAME_FILES_TOKEN as a Actions secret with read-only access to your private game-input repository.}"
+          : "${INPUT_REPO:?Set BR_GAME_FILES_REPO to owner/repository for the private input repository.}"
+          : "${INPUT_RELEASE:?Set BR_GAME_FILES_RELEASE to the private release tag containing battle-realms-inputs.zip.}"
+          mkdir -p "$RUNNER_TEMP/private-game-inputs"
+          gh release download "$INPUT_RELEASE" --repo "$INPUT_REPO" \
+            --pattern battle-realms-inputs.zip --dir "$RUNNER_TEMP/private-game-inputs"
+          unzip -q "$RUNNER_TEMP/private-game-inputs/battle-realms-inputs.zip" \
+            -d "$RUNNER_TEMP/private-game-inputs/unpacked"
+          exe=$(find "$RUNNER_TEMP/private-game-inputs/unpacked" -type f -iname 'Battle_Realms_F.exe' -print -quit)
+          [[ -n "$exe" ]] || { echo "Expected Battle_Realms_F.exe in private input archive" >&2; exit 1; }
+          actual=$(sha256sum "$exe" | cut -d' ' -f1)
+          expected=bc0e026e906faab266a58d2f02d5015f4a21937c6a0669d934b53d21836701f0
+          [[ "$actual" == "$expected" ]] || { echo "Unexpected executable SHA-256: $actual" >&2; exit 1; }
+          echo "BR_GAME_EXE=$exe" >> "$GITHUB_ENV"
+          scripts=$(find "$RUNNER_TEMP/private-game-inputs/unpacked" -type d -iname Scripts -print -quit)
+          [[ -n "$scripts" ]] || { echo "Expected the game's Scripts directory in the private input archive" >&2; exit 1; }
+          echo "BR_GAME_SCRIPTS=$scripts" >> "$GITHUB_ENV"
+
+      - name: Run static recompilation and generated C++ ARM64 compilation
+        shell: bash
+        run: |
+          set -euo pipefail
+          temp="$RUNNER_TEMP/br-build"
+          ra3="$RUNNER_TEMP/RA3-Native"
+          mkdir -p "$temp"
+          python tools/recompile.py --exe "$BR_GAME_EXE" \
+            --analyze "$RUNNER_TEMP/analyze" --lift "$RUNNER_TEMP/lift_pe" \
+            --workspace "$temp" --units 96
+          python tools/recompile_scripts_rebased.py \
+            --scripts-dir "$BR_GAME_SCRIPTS" \
+            --analyze "$RUNNER_TEMP/analyze" --lift "$RUNNER_TEMP/lift_pe" \
+            --workspace "$temp" --units 8 --output-name rebased_batch96 \
+            --main-dir "$temp/generated/main96_export_seeded"
+          toolchain="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+          common=("-G" "Ninja" "-DCMAKE_TOOLCHAIN_FILE=$toolchain" \
+            "-DANDROID_ABI=arm64-v8a" "-DANDROID_PLATFORM=android-29" \
+            "-DCMAKE_BUILD_TYPE=Release" "-DRA3_RUNTIME_DIR=$ra3/runtime")
+          cmake -S tools/lifted -B build/arm64_hybrid96 "${common[@]}" \
+            "-DLIFTED_DIR=$temp/generated/main96_export_seeded"
+          cmake --build build/arm64_hybrid96 --parallel 2
+          cmake -S tools/lifted -B build/arm64_rebased_scripts "${common[@]}" \
+            "-DLIFTED_DIRS=$temp/generated/scripts/rebased_batch96" \
+            "-DBR_COMBINED_TABLE=$temp/generated/combined_rebased/lifted_table.cpp" \
+            "-DBR_GENERATED_ROOT=$temp/generated/combined_rebased"
+          cmake --build build/arm64_rebased_scripts --parallel 2
+          table_obj=$(find build/arm64_rebased_scripts/CMakeFiles/battle_realms_lifted.dir \
+            -name 'lifted_table.cpp.o' -print -quit)
+          [[ -n "$table_obj" ]] || { echo "Combined lifted dispatch-table object was not built" >&2; exit 1; }
+          cp "$table_obj" build/arm64_rebased_scripts/lifted_table_combined.o
+          test "$(find build/arm64_hybrid96/CMakeFiles/battle_realms_lifted.dir -name '*.o' | wc -l)" -eq 96
+          test "$(find build/arm64_rebased_scripts/CMakeFiles/battle_realms_lifted.dir -name '*.o' ! -name 'lifted_table.cpp.o' | wc -l)" -eq 544
+
+      - name: Run host regression tests when provided
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f tests/run_host_tests.sh ]]; then
+            bash tests/run_host_tests.sh
+          elif [[ -f CMakePresets.json ]] && cmake --list-presets | grep -q host-tests; then
+            cmake --preset host-tests
+            cmake --build --preset host-tests --parallel 2
+            ctest --preset host-tests --output-on-failure
+          else
+            echo "No declared host regression-test entry point; generated ARM64 C++ compilation remains the build validation." | tee -a "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Build debug APK
+        working-directory: android
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+      - name: Record build diagnostics
+        if: always()
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/br-report"
+          {
+            echo "commit=$GITHUB_SHA"
+            echo "workflow_run=$GITHUB_RUN_ID"
+            echo "android_abi=arm64-v8a"
+            echo "game_executable_sha256=bc0e026e906faab266a58d2f02d5015f4a21937c6a0669d934b53d21836701f0"
+          } > "$RUNNER_TEMP/br-report/build-metadata.txt"
+          if [[ -d "$RUNNER_TEMP/br-build/analysis" ]]; then
+            cp -R "$RUNNER_TEMP/br-build/analysis" "$RUNNER_TEMP/br-report/"
+          fi
+          find android -type f \( -name '*.log' -o -name 'hs_err_pid*.log' \) \
+            -not -path '*/build/intermediates/*' -exec cp --parents {} "$RUNNER_TEMP/br-report" \; || true
+
+      - name: Upload non-game diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: battle-realms-build-diagnostics-${{ github.run_number }}
+          path: ${{ runner.temp }}/br-report
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Publish APK to a separate private artifacts repository
+        if: success() && github.event_name != 'pull_request'
+        env:
+          PRIVATE_TOKEN: ${{ secrets.BR_PRIVATE_ARTIFACT_TOKEN }}
+          PRIVATE_REPO: ${{ vars.BR_PRIVATE_ARTIFACT_REPO }}
+          APK: android/app/build/outputs/apk/debug/app-debug.apk
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$PRIVATE_TOKEN" || -z "$PRIVATE_REPO" ]]; then
+            echo "APK was built but not published: configure BR_PRIVATE_ARTIFACT_TOKEN and BR_PRIVATE_ARTIFACT_REPO for a private destination." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          tag="ci-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
+          GH_TOKEN="$PRIVATE_TOKEN" gh release create "$tag" "$APK" \
+            --repo "$PRIVATE_REPO" --title "Battle Realms ARM64 CI $tag" \
+            --notes "Private CI build for commit $GITHUB_SHA. This APK contains lifted game code; keep this release repository private."
+          echo "APK uploaded only to private repository $PRIVATE_REPO (release $tag)." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Remove private game inputs and derived build outputs
+        if: always()
+        shell: bash
+        run: |
+          rm -rf "$RUNNER_TEMP/private-game-inputs" "$RUNNER_TEMP/br-build" \
+            build/arm64_hybrid96 build/arm64_rebased_scripts \
+            android/app/build android/.gradle
