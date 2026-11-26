@@ -1,0 +1,67 @@
+## Private game inputs and copyrighted/generated game-derived code.
+generated/
+lifted/
+game/
+gamefiles/
+game_data/
+original_assets/
+*.exe
+*.dll
+*.h2o
+*.bre
+*.dat
+*.sav
+
+## Local analysis databases, third-party clones and downloaded toolchains.
+references/
+deps/
+config/
+analysis/
+cache/
+tmp/
+work/
+
+## Build output and compiler caches.
+build/
+android/.gradle/
+android/build/
+android/app/build/
+android/app/.cxx/
+# Exclude the accidental flat copy; canonical app sources are under app/src/main/.
+android/app/src/AndroidManifest.xml
+android/app/src/CMakeLists.txt
+android/app/src/brnative.cpp
+android/app/src/preview_empty_lift_table.cpp
+android/app/src/cpp/
+android/app/src/java/
+android/app/src/res/
+android/app/src/main/CMakeLists.txt
+android/app/src/main/brnative.cpp
+android/app/src/main/preview_empty_lift_table.cpp
+.cxx/
+CMakeFiles/
+CMakeCache.txt
+*.o
+*.obj
+*.a
+*.so
+*.apk
+*.aab
+*.class
+*.pyc
+__pycache__/
+
+## Local machine state, credentials and diagnostics.
+local.properties
+*.jks
+*.keystore
+google-services.json
+*.log
+hs_err_pid*.log
+replay_pid*.log
+*.db
+*.db-journal
+*.lock
+*.pid
+*.profraw
+*.profdata

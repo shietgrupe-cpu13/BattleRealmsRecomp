@@ -1,0 +1,29 @@
+plugins { id 'com.android.application' }
+
+def guestProfileEnabled = project.hasProperty('guestProfile') && project.property('guestProfile').toBoolean()
+
+android {
+    namespace 'org.battlerealms.nativeport'
+    compileSdk 34
+    defaultConfig {
+        applicationId 'org.battlerealms.nativeport'
+        minSdk 29
+        targetSdk 34
+        versionCode 1
+        versionName '0.1-preview'
+        ndkVersion '28.2.13676358'
+        ndk { abiFilters 'arm64-v8a' }
+        externalNativeBuild {
+            cmake {
+                arguments '-DCMAKE_BUILD_TYPE=Release', "-DBR_ANDROID_GUEST_PROFILE=${guestProfileEnabled ? 'ON' : 'OFF'}"
+                cppFlags '-std=c++17'
+            }
+        }
+    }
+    externalNativeBuild { cmake { path 'src/main/cpp/CMakeLists.txt' } }
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_1_8
+        targetCompatibility JavaVersion.VERSION_1_8
+    }
+    buildTypes { debug { debuggable true } }
+}

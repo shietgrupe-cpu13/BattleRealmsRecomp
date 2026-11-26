@@ -35,3 +35,17 @@ The safety job passed. The Android preflight still reported the source tree miss
 ## Cache policy
 
 Gradle dependency caching and ccache for Capstone/RA3 public-toolchain code are configured. The first differential run had 18 misses and no hits; the repeat reported 18 hits and 18 misses. This confirms cache reuse but is not a timing benchmark, so no speedup is claimed. Generated BattleRealms translation units, object files and APKs are not cached. `sccache` is not applicable to this C++/Java project because no Rust compilation target is present.
+# Source migration checkpoint — 2026-11-27
+
+- The public repository now carries the BattleRealms runtime, Android launcher and
+  renderer sources, recompile/rebase tools, and host smoke-test inputs. The 1.32 GB
+  generated tree, 3.4 GB Android build outputs, downloaded references/toolchains,
+  local diagnostics, game executable, script DLLs, and assets remain excluded.
+- The public workflow is restricted to source-boundary and source-tool checks. It
+  no longer runs the game executable, uploads logs derived from the executable, or
+  publishes an APK to public artifacts.
+- An actual BattleRealms ARM64/APK cloud build has **not yet been verified**. It must
+  run from a private builder repository so executable-derived code, logs, and APK
+  remain private. The next build result must be reported from that private workflow.
+- Distribution remains blocked pending owner review of GPL-3.0 RA3 runtime obligations
+  and the proprietary game's terms; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
