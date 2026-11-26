@@ -6,7 +6,7 @@ Updated 2026-11-27 (Asia/Shanghai).
 
 - Public repository: `shietgrupe-cpu13/BattleRealmsRecomp`.
 - Work branch: `ci/android-static-recompilation`.
-- Current branch HEAD: `57bae7f` (documentation-only; workflow code last tested at `cdf461d`).
+- The branch has documentation-only follow-ups after tested workflow commit `cdf461d`.
 - The original local workspace at `E:\BattleRealmsRecomp` has no `.git` directory and was not pushed. The public remote initially contained only one README commit.
 - No Battle Realms binaries, assets, generated lifted files, credentials, or third-party implementation code were uploaded.
 
