@@ -65,12 +65,14 @@ jobs:
               ".dds", ".tga", ".bmp", ".pak", ".sav",
           }
           forbidden_dirs = {"lifted", "generated", "game", "gamefiles", "game_data", "original_assets"}
+          # The build recipe is safe source metadata; generated code under lifted/ is not.
+          allowed_build_metadata = {"tools/lifted/CMakeLists.txt"}
           bad = []
           for name in paths:
               path = PurePosixPath(name)
               if path.suffix.lower() in forbidden_exts:
                   bad.append(name)
-              if any(part.lower() in forbidden_dirs for part in path.parts):
+              if name not in allowed_build_metadata and any(part.lower() in forbidden_dirs for part in path.parts):
                   bad.append(name)
           if bad:
               print("::error::Proprietary game data or lifted/generated code must not be committed:")
