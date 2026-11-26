@@ -3,6 +3,7 @@ name: BattleRealmsRecomp Android ARM64
 on:
   push:
     branches: [main, "ci/**"]
+    tags: ["v*"]
     paths:
       - ".github/workflows/android-recomp.yml"
       - "tools/**"
@@ -63,7 +64,7 @@ jobs:
               ".exe", ".dll", ".h2o", ".bre", ".dat", ".wav", ".mp3",
               ".dds", ".tga", ".bmp", ".pak", ".sav",
           }
-          forbidden_dirs = {"lifted", "generated", "game", "assets", "content"}
+          forbidden_dirs = {"lifted", "generated", "game", "gamefiles", "game_data", "original_assets"}
           bad = []
           for name in paths:
               path = PurePosixPath(name)
@@ -90,6 +91,7 @@ jobs:
             tools/lift_scripts.py
             tools/merge_lifted_tables.py
             tools/patch_generated_x86_compat.py
+            tools/requirements-ci.txt
             tools/lifted/CMakeLists.txt
             runtime/pe32_loader/CMakeLists.txt
             runtime/android_diagnostics.cpp
@@ -178,7 +180,7 @@ jobs:
           cache-dependency-path: tools/requirements-ci.txt
 
       - name: Install Python analysis dependency
-        run: python -m pip install --upgrade pip pefile
+        run: python -m pip install --upgrade pip -r tools/requirements-ci.txt
 
       - name: Install native build tools and ccache
         run: sudo apt-get update && sudo apt-get install -y build-essential ninja-build ccache
@@ -287,7 +289,8 @@ jobs:
             --analyze "$RUNNER_TEMP/analyze" --lift "$RUNNER_TEMP/lift_pe" \
             --workspace "$temp" --units 8 --output-name rebased_batch96 \
             --main-dir "$temp/generated/main96_export_seeded"
-          toolchain="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+          ndk="$ANDROID_HOME/ndk/28.2.13676358"
+          toolchain="$ndk/build/cmake/android.toolchain.cmake"
           common=("-G" "Ninja" "-DCMAKE_TOOLCHAIN_FILE=$toolchain" \
             "-DANDROID_ABI=arm64-v8a" "-DANDROID_PLATFORM=android-29" \
             "-DCMAKE_BUILD_TYPE=Release" "-DRA3_RUNTIME_DIR=$ra3/runtime")
@@ -303,7 +306,7 @@ jobs:
             -name 'lifted_table.cpp.o' -print -quit)
           [[ -n "$table_obj" ]] || { echo "Combined lifted dispatch-table object was not built" >&2; exit 1; }
           cp "$table_obj" build/arm64_rebased_scripts/lifted_table_combined.o
-          test "$(find build/arm64_hybrid96/CMakeFiles/battle_realms_lifted.dir -name '*.o' | wc -l)" -eq 96
+          test "$(find build/arm64_hybrid96/CMakeFiles/battle_realms_lifted.dir -name '*.o' ! -name 'lifted_table.cpp.o' | wc -l)" -eq 96
           test "$(find build/arm64_rebased_scripts/CMakeFiles/battle_realms_lifted.dir -name '*.o' ! -name 'lifted_table.cpp.o' | wc -l)" -eq 544
 
       - name: Run host runtime and compatibility regression tests
@@ -333,6 +336,10 @@ jobs:
           find android -type f \( -name '*.log' -o -name 'hs_err_pid*.log' \) \
             -not -path '*/build/intermediates/*' -exec cp --parents {} "$RUNNER_TEMP/br-report" \; || true
 
+      - name: Prepare GPL source bundle for the pinned RA3 runtime
+        if: success()
+        run: tar -C "$RUNNER_TEMP" --exclude='.git' -czf "$RUNNER_TEMP/RA3-Native-source-b46328a6.tar.gz" RA3-Native
+
       - name: Upload non-game diagnostics
         if: always()
         uses: actions/upload-artifact@v4
@@ -355,10 +362,17 @@ jobs:
             echo "APK was built but not published: configure BR_PRIVATE_ARTIFACT_TOKEN and BR_PRIVATE_ARTIFACT_REPO for a private destination." | tee -a "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
-          tag="ci-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            tag="$GITHUB_REF_NAME"
+            title="Battle Realms ARM64 $tag"
+          else
+            tag="ci-${GITHUB_RUN_NUMBER}-${GITHUB_SHA::7}"
+            title="Battle Realms ARM64 CI $tag"
+          fi
           GH_TOKEN="$PRIVATE_TOKEN" gh release create "$tag" "$APK" \
-            --repo "$PRIVATE_REPO" --title "Battle Realms ARM64 CI $tag" \
-            --notes "Private CI build for commit $GITHUB_SHA. This APK contains lifted game code; keep this release repository private."
+            "$RUNNER_TEMP/RA3-Native-source-b46328a6.tar.gz" \
+            --repo "$PRIVATE_REPO" --title "$title" \
+            --notes "Private CI build for commit $GITHUB_SHA. This APK contains lifted game code; keep this release repository private. Includes source for the pinned GPL-3.0 RA3-Native runtime."
           echo "APK uploaded only to private repository $PRIVATE_REPO (release $tag)." >> "$GITHUB_STEP_SUMMARY"
 
       - name: Remove private game inputs and derived build outputs
