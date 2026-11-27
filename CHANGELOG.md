@@ -18,4 +18,5 @@
 
 - Replaced exact-size reserve-on-every-append in GLES compatible-draw batches with geometric vertex capacity growth. Regression passed: 1,000 triangle appends preserved 3,000 vertices with at most eight capacity changes. No device timing comparison yet.
 - Added `android-new` to relevant-push workflow triggers and a renderer component test step. These checks do not lift or execute the Battle Realms binary.
+- Actions run [45959175529](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45959175529) passed the full public source-safety job and the new allocation regression. No ARM64/APK or game behavior was tested.
 - Reconciled stale source-migration status: public branch now contains runtime/launcher/tools/tests/build metadata; private builder remains untouched and no new APK was produced.

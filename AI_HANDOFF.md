@@ -13,7 +13,7 @@ Updated 2026-11-27 (Asia/Shanghai), branch `android-new`.
 
 - Fixed a missed Actions trigger: relevant pushes to `android-new` now run the source-safety/component workflow.
 - Fixed compatible GLES draw-batch growth: renderer appends previously reserved exactly the next vertex count. `runtime/d3d7_vertex_batch.h` now grows geometrically and is used for both first batch creation and later compatible draws.
-- `tests/d3d7_vertex_batch_smoke.cpp` exercises 1,000 triangle appends, verifies all 3,000 vertices remain, rejects invalid input, and bounds capacity changes. `bash tests/run_renderer_component_tests.sh` passed locally. New CI result is pending; device performance is unmeasured.
+- `tests/d3d7_vertex_batch_smoke.cpp` exercises 1,000 triangle appends, verifies all 3,000 vertices remain, rejects invalid input, and bounds capacity changes. `bash tests/run_renderer_component_tests.sh` passed locally and in Actions run [45959175529](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45959175529). Device performance is unmeasured.
 - Existing local APK `E:\BattleRealmsRecomp\work\installed_battlerealms.apk` is 192,614,175 bytes (2026-11-26). Saved device trace shows guest entry `0x006a2441` and first frame after 1.684 s from guest start. This is historical evidence; it is not a current install or skirmish proof.
 - Saved performance windows report 12.17–13.29 FPS, 75.3–82.3 ms average frame time, 66.3–72.1 ms guest CPU/frame, 41.5–41.8 ms batch queue/frame and 11.5–12.4 ms framebuffer conversion/frame. No controlled comparison exists yet.
 
