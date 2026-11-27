@@ -11,6 +11,7 @@ Updated 2026-11-27.
 - This branch changes compatible GLES batch accumulation to geometric capacity growth. Its focused test passed locally and in Actions run [45959175529](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45959175529), retaining 3,000 vertices with at most eight capacity changes. Device impact remains unmeasured.
 - Relevant pushes to `android-new` now enter the public source-safety/component workflow. That workflow cannot access game inputs or emit a game-derived APK.
 - Audio investigation: the retained 2026-11-27 phone trace shows AAudio callback duration 22–40 µs on average, zero xruns and zero deadline overruns. It records 44.1 kHz mono/stereo MS-ADPCM streams and up to 8‰ hard-clipped output samples in a later window. The public source branch now tests and fixes a decoder delta-state narrowing defect; no new APK or audible device result exists yet.
+- Commit `515dfda` passed source checks and both D3D7/audio component tests in GitHub Actions [45964415836](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45964415836). This did not compile the ARM64 library, package an APK, or verify sound on Android.
 
 ## Current state
 
