@@ -18,14 +18,15 @@ def main() -> int:
         roots_file = Path(temporary) / "roots.txt"
         roots_file.write_text(
             "# observed guest dispatch roots\n"
-            "0x006A13AC\n"
             "0x006A12DC\n"
+            "0x006A13AC\n"
+            "0x006A13A0\n"
             "0x006A13AC # duplicate\n",
             encoding="utf-8",
         )
-        valid_roots = {0x006A12DC, 0x006A13AC}
+        valid_roots = {0x006A12DC, 0x006A13A0, 0x006A13AC}
         roots = read_runtime_roots(roots_file, lambda address: address in valid_roots)
-        check(roots == [0x006A12DC, 0x006A13AC], "runtime roots must be sorted and deduplicated")
+        check(roots == [0x006A12DC, 0x006A13A0, 0x006A13AC], "runtime roots must be sorted and deduplicated")
 
         roots_file.write_text("0x0000003E\n", encoding="utf-8")
         try:
