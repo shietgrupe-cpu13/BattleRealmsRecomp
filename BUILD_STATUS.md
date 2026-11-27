@@ -10,6 +10,7 @@ Updated 2026-11-27.
 - Saved foreground windows in `work\after_play_logcat.txt` show 12.17–13.29 presented FPS, 75.3–82.3 ms average frame time, 66.3–72.1 ms guest CPU/frame, 41.5–41.8 ms GPU batch-queue time/frame and 11.5–12.4 ms framebuffer conversion/frame. They are not a controlled before/after comparison and are not labeled as skirmish evidence.
 - This branch changes compatible GLES batch accumulation to geometric capacity growth. Its focused test passed locally and in Actions run [45959175529](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45959175529), retaining 3,000 vertices with at most eight capacity changes. Device impact remains unmeasured.
 - Relevant pushes to `android-new` now enter the public source-safety/component workflow. That workflow cannot access game inputs or emit a game-derived APK.
+- Audio investigation: the retained 2026-11-27 phone trace shows AAudio callback duration 22–40 µs on average, zero xruns and zero deadline overruns. It records 44.1 kHz mono/stereo MS-ADPCM streams and up to 8‰ hard-clipped output samples in a later window. The public source branch now tests and fixes a decoder delta-state narrowing defect; no new APK or audible device result exists yet.
 
 ## Current state
 

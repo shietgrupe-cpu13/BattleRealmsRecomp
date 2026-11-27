@@ -20,3 +20,10 @@
 - Added `android-new` to relevant-push workflow triggers and a renderer component test step. These checks do not lift or execute the Battle Realms binary.
 - Actions run [45959175529](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45959175529) passed the full public source-safety job and the new allocation regression. No ARM64/APK or game behavior was tested.
 - Reconciled stale source-migration status: public branch now contains runtime/launcher/tools/tests/build metadata; private builder remains untouched and no new APK was produced.
+
+## 2026-11-27 — MS-ADPCM state-width fix
+
+- Device audio logs from the retained skirmish attempt show stable AAudio callbacks (0 xruns / 0 deadline overruns) while Battle Realms requests 44.1 kHz mono/stereo MS-ADPCM conversion. Aggregate hard clipping rose to 8‰ in one late window, but that alone does not explain the audible artifact.
+- Found signed-16 truncation of the adaptive MS-ADPCM delta after each decoded nibble. Decoder references keep the evolving step state wide; wraparound can invert or collapse the delta on later samples. Moved the production nibble decoder into `runtime/ms_adpcm.h` and retained 32-bit delta state with overflow-safe adaptation.
+- Added a focused high-delta PCM regression to `tests/ms_adpcm_decoder_smoke.cpp` and ran `bash tests/run_renderer_component_tests.sh`: D3D7 batch regression and MS-ADPCM regression both passed. This checks arithmetic, not real asset/audio output.
+- Next verification is Android audio playback with a new authorized build and stream-level diagnostics. No new APK or device result is claimed by this change.

@@ -7,6 +7,7 @@
 #include "d3d7_fixed_function.h"
 #include "d3d7_gpu_backend.h"
 #include "d3d7_scanline.h"
+#include "ms_adpcm.h"
 
 #include <algorithm>
 #include <atomic>
@@ -993,28 +994,6 @@ void acmStreamOpen(CPU* cpu, const ApiImportStub&)
 #endif
 }
 
-int16_t decodeMsAdpcmNibble(uint8_t nibble, int16_t& delta, int16_t& sample1,
-	int16_t& sample2, const std::pair<int16_t, int16_t>& coefficient)
-{
-	static constexpr int16_t adaptation[16] = {
-		230, 230, 230, 230, 307, 409, 512, 614,
-		768, 614, 512, 409, 307, 230, 230, 230
-	};
-	const int32_t signedNibble = (nibble & 8u) ? int32_t(nibble) - 16 : nibble;
-	const int32_t prediction = int32_t(sample1) * coefficient.first +
-		int32_t(sample2) * coefficient.second;
-	// MS-ADPCM uses integer division by 256 for the predictor. C/C++ signed
-	// division truncates toward zero, matching the Windows/Wine decoder; an
-	// arithmetic shift would round negative non-integral predictions down and
-	// bias every such decoded sample by one.
-	const int32_t linear = prediction / 256;
-	const int32_t decoded = std::clamp(linear + signedNibble * int32_t(delta), -32768, 32767);
-	delta = static_cast<int16_t>(std::max(16, (int32_t(adaptation[nibble]) * delta) >> 8));
-	sample2 = sample1;
-	sample1 = static_cast<int16_t>(decoded);
-	return sample1;
-}
-
 bool decodeMsAdpcmBlock(const GuestAcmStream& stream, const uint8_t* source,
 	uint32_t destination, uint32_t capacityBytes)
 {
@@ -1024,14 +1003,14 @@ bool decodeMsAdpcmBlock(const GuestAcmStream& stream, const uint8_t* source,
 	if (!channels || channels > 2u || stream.sourceBlockAlign < headerBytes ||
 		capacityBytes < expectedBytes) return false;
 	int16_t predictor[2]{};
-	int16_t delta[2]{};
+	int32_t delta[2]{};
 	int16_t sample1[2]{};
 	int16_t sample2[2]{};
 	for (uint32_t channel = 0; channel < channels; ++channel) {
 		const uint8_t predictorIndex = source[channel];
 		if (predictorIndex >= stream.coefficients.size()) return false;
 		predictor[channel] = predictorIndex;
-		delta[channel] = std::max<int16_t>(16, static_cast<int16_t>(
+		delta[channel] = std::max<int32_t>(16, static_cast<int16_t>(
 			uint16_t(source[channels + channel * 2u]) |
 			(uint16_t(source[channels + channel * 2u + 1u]) << 8)));
 		sample1[channel] = static_cast<int16_t>(uint16_t(source[channels * 3u + channel * 2u]) |
@@ -1054,7 +1033,7 @@ bool decodeMsAdpcmBlock(const GuestAcmStream& stream, const uint8_t* source,
 			for (uint32_t nibbleIndex = 0; nibbleIndex < 2u && index + nibbleIndex < codeCount; ++nibbleIndex) {
 				const uint8_t nibble = nibbleIndex ? static_cast<uint8_t>(packed & 0x0fu) :
 					static_cast<uint8_t>(packed >> 4);
-				const int16_t sample = decodeMsAdpcmNibble(nibble, delta[0], sample1[0], sample2[0],
+				const int16_t sample = audio::decodeMsAdpcmNibble(nibble, delta[0], sample1[0], sample2[0],
 					stream.coefficients[static_cast<size_t>(predictor[0])]);
 				guest::store<int16_t>(destination + frame * 2u, sample);
 				++frame;
@@ -1063,7 +1042,7 @@ bool decodeMsAdpcmBlock(const GuestAcmStream& stream, const uint8_t* source,
 			for (uint32_t channel = 0; channel < 2u; ++channel) {
 				const uint8_t nibble = channel ? static_cast<uint8_t>(packed & 0x0fu) :
 					static_cast<uint8_t>(packed >> 4);
-				const int16_t sample = decodeMsAdpcmNibble(nibble, delta[channel],
+				const int16_t sample = audio::decodeMsAdpcmNibble(nibble, delta[channel],
 					sample1[channel], sample2[channel],
 					stream.coefficients[static_cast<size_t>(predictor[channel])]);
 				guest::store<int16_t>(destination + (frame * channels + channel) * 2u, sample);
