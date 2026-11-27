@@ -1,5 +1,6 @@
 #include "d3d7_gpu_backend.h"
 #include "d3d7_fixed_function.h"
+#include "d3d7_vertex_batch.h"
 
 #include <EGL/egl.h>
 #include <GLES3/gl3.h>
@@ -495,10 +496,7 @@ bool renderGpuTriangles(const GpuDrawState& s,const GpuVertex* v,uint32_t count)
 			count > static_cast<uint32_t>(std::numeric_limits<GLsizei>::max())) return false;
 		if (g.batchPending && g.owner == std::this_thread::get_id() && sameBatchState(g.pendingState, s)) {
 			if (g.pendingVertices.size() > size_t(std::numeric_limits<GLsizei>::max()) - count) return false;
-			const size_t required = g.pendingVertices.size() + count;
-			g.pendingVertices.reserve(required);
-			g.pendingVertices.insert(g.pendingVertices.end(), v, v + count);
-			return true;
+			return appendGpuVertices(g.pendingVertices, v, count);
 		}
 		if (!flushPending() || !ensureContext()) return false;
 		Target* target = nullptr;
@@ -520,8 +518,7 @@ bool renderGpuTriangles(const GpuDrawState& s,const GpuVertex* v,uint32_t count)
 		if (!g.vertexArray) glGenVertexArrays(1, &g.vertexArray);
 		if (!g.vertexBuffer || !g.vertexArray || glGetError() != GL_NO_ERROR) return false;
 		g.pendingVertices.clear();
-		g.pendingVertices.reserve(count);
-		g.pendingVertices.insert(g.pendingVertices.end(), v, v + count);
+		if (!appendGpuVertices(g.pendingVertices, v, count)) return false;
 		g.pendingState = s;
 		g.pendingProgram = *program;
 		g.pendingTextures = textures;

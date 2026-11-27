@@ -1,42 +1,34 @@
-# AI handoff — BattleRealmsRecomp cloud build migration
+﻿# AI handoff — BattleRealmsRecomp recovery
 
-Updated 2026-11-27 (Asia/Shanghai).
+Updated 2026-11-27 (Asia/Shanghai), branch `android-new`.
 
-## Current repository state
+## Current state and restrictions
 
-- Public repository: `shietgrupe-cpu13/BattleRealmsRecomp`.
-- Work branch: `ci/android-static-recompilation`.
-- The branch has documentation-only follow-ups after tested workflow commit `cdf461d`.
-- The original local workspace at `E:\BattleRealmsRecomp` has no `.git` directory and was not pushed. The public remote initially contained only one README commit.
-- No Battle Realms binaries, assets, generated lifted files, credentials, or third-party implementation code were uploaded.
+- Public work branch: `shietgrupe-cpu13/BattleRealmsRecomp:android-new`, created from `ci/android-static-recompilation` at `c35e552`. `main` is untouched.
+- The public branch carries the reviewed runtime, Android launcher, renderer, tools, host smoke tests and lifted build metadata. Game executables/assets, generated game-derived C++, local build output, private logs and APKs remain excluded.
+- Do not modify or trigger the companion private repository without explicit user authorization. Do not run heavy local builds.
+- Public source-safety run `45873981727` passed on `c35e552`; this was not a BattleRealms lift, ARM64 library, APK or gameplay test.
 
-## Implemented cloud workflow
+## Latest implementation and evidence
 
-`.github/workflows/android-recomp.yml` runs a full-history secret scan, a proprietary-file policy check, and a source-tree preflight. With complete source present, it fetches game inputs from a private release, verifies the known executable hash, compiles pinned Capstone/RA3 analyzer and lifter tools, runs the main and script lift drivers, compiles 96 main and 544 script ARM64 object partitions, runs the required host test entry point, and invokes Gradle for the debug APK. Guest-derived outputs are not cached. Diagnostics are downloadable from this public repository; APKs and the pinned RA3 GPL source archive publish only to a separately configured private release repository. A game-file-free upstream lifter differential job runs independently. Nightly builds use the schedule; stable builds use `v*` tags.
+- Fixed a missed Actions trigger: relevant pushes to `android-new` now run the source-safety/component workflow.
+- Fixed compatible GLES draw-batch growth: renderer appends previously reserved exactly the next vertex count. `runtime/d3d7_vertex_batch.h` now grows geometrically and is used for both first batch creation and later compatible draws.
+- `tests/d3d7_vertex_batch_smoke.cpp` exercises 1,000 triangle appends, verifies all 3,000 vertices remain, rejects invalid input, and bounds capacity changes. `bash tests/run_renderer_component_tests.sh` passed locally. New CI result is pending; device performance is unmeasured.
+- Existing local APK `E:\BattleRealmsRecomp\work\installed_battlerealms.apk` is 192,614,175 bytes (2026-11-26). Saved device trace shows guest entry `0x006a2441` and first frame after 1.684 s from guest start. This is historical evidence; it is not a current install or skirmish proof.
+- Saved performance windows report 12.17–13.29 FPS, 75.3–82.3 ms average frame time, 66.3–72.1 ms guest CPU/frame, 41.5–41.8 ms batch queue/frame and 11.5–12.4 ms framebuffer conversion/frame. No controlled comparison exists yet.
 
-## Actual build evidence
+## Reference integration decisions
 
-- Commit: `e187ef087889262b18b2c7e359c4d04652b52a32` (workflow and initial status note).
-- Push run: [45851858872](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45851858872).
-- Manual run: [45851897234](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45851897234).
-- Differential run: [45862794138](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45862794138), commit `43ea086`.
-- All runs passed secret scanning and the tracked-file safety check. The differential run also passed RA3-Native's x86-vs-lifted suite: 580/580 cases, with both result streams 1,224,960 bytes. This is generic lifter validation, not Battle Realms execution.
-- Run [45864439082](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45864439082) passed the audit but failed differential setup: a restored Capstone cache occupied the source clone directory. The cache/build path collision has been corrected with an isolated build directory and new cache key; a successful rerun is pending.
-- Runs [45864829031](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45864829031) and [45865017509](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45865017509) pass after that correction. Both pass 580/580 generic RA3 differential cases. The latter reports 18 ccache hits and 18 misses (50% of 36 calls); no wall-time benefit was measured. Both skip the BattleRealms APK job because the public repo still lacks project source.
-- Push run [45868770190](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45868770190) passed the audit and 580/580 differential tests after narrowing the `lifted` path guard to permit the safe `tools/lifted/CMakeLists.txt` build recipe. This run still skipped BattleRealms compilation because the project source is absent. The exception itself was reviewed in workflow code but is not exercised by a tracked sample file yet.
-- All runs skipped the Battle Realms APK job because this public repository has no recompilation/runtime/Android source tree. No Battle Realms APK or generated game code was produced.
-- The latest run has no BattleRealms runtime milestone: only the safety audit and generic RA3 lifter tests executed. The Android step summary explicitly reports the missing source preflight and confirms that no game files, generated lift output or APK were fetched or published.
-- Local process inspection found no active BattleRealms-related compile or recompilation process to stop.
+- RA3-Native is the closest x86-to-ARM64 static-lift and workflow analogue and already informs this project's lift/runtime architecture. Its D3D9 renderer is not transferable to the game's D3D7 path; GPL-3.0 distribution obligations remain unresolved.
+- PCRecomp is MIT and useful for Win32HLE/runtime semantics; it is not a replacement for the existing RA3-derived lifting path.
+- SC2 Android Recomp is MIT and useful for game-free validation and Android recompilation workflow. Its D3D9/Vulkan implementation does not implement Battle Realms' D3D7 fixed-function behavior.
+- D7VK (Zlib) and Wine are behavioral references for D3D7/DirectDraw. D7VK's Vulkan/Wine platform assumptions and Wine's implementation/license must be reviewed before code reuse.
+- web-recomp-kit has relevant DDraw/D3D2 layering and SDL3 architecture, but GitHub reports `NOASSERTION` for license metadata; no code reuse until its exact license is established.
+- DxWrapper's DDrawCompat/DD7to9, XenonRecomp, and N64Recomp are reference-only for now: desktop wrapper / different ISA assumptions. Check license at file/package level before any reuse.
 
-## Remaining work
+## Next
 
-1. Import a reviewed, license-compliant source snapshot into this repository; keep game data and lifted output private.
-2. Add `tests/run_host_tests.sh`; it is now a required gate for ARM64/APK builds.
-3. Validate the full cloud pipeline against that source snapshot. Current runs cover safety and upstream generic instruction tests only.
-4. Configure the owner-controlled private game-input repo/release and read-only token.
-5. Configure a separate private APK output repo/token. Never publish the APK as an artifact of this public repository.
-6. Complete GPL-3.0 compliance for the RA3-Native runtime included in generated builds.
-
-## Reference
-
-The live RA3-Native Android workflow at commit `b46328a6ec6f52ce20db61a73e9f7aab3c5b3b90` compiles Capstone and the analyzer/lifter, obtains its game binary from a private release, performs bulk lifting, builds an Android APK, and uses ccache. Its license is GPL-3.0. This BattleRealms workflow keeps lifted outputs and APKs out of public caches/artifacts. ccache is restricted to public toolchain builds; sccache is not applicable to the current C++/Java codebase.
+1. Wait for and inspect Actions on the `android-new` push; expect only source-safety and the independent renderer component test.
+2. Obtain authorization before any private-builder action; then prove lifted compilation, ARM64 linking and APK packaging there.
+3. Repeat the same Android skirmish scene to measure this capacity change. Independently inspect black terrain and audio clipping from current logs/captures.
+4. Continue from observed first divergence; do not claim a renderer fix from successful compilation or component tests.

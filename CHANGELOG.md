@@ -13,3 +13,9 @@
 - Fixed the Capstone source/build directory collision by storing the build cache separately and linking it into the expected source tree. Runs 45864829031 and 45865017509 passed the RA3 generic differential suite (580/580); run 45865017509 recorded 18/36 ccache hits. No timing gain is claimed.
 - Latest full workflow run passed safety and differential jobs, but skipped the BattleRealms ARM64/APK job because required source files and `tests/run_host_tests.sh` are absent from the public repo. No BattleRealms APK was generated remotely. A separately existing local APK was handed off through the owner's private project Drive folder; it is not a product of this cloud workflow.
 - Workflow preflight guard now permits only `tools/lifted/CMakeLists.txt` within the otherwise-prohibited `lifted` path family, so the required build recipe will not conflict with the generated-code safety rule. Push run 45868770190 passed the safety scan and 580/580 generic lifter tests; no BattleRealms source build ran.
+
+## 2026-11-27 — Batch growth and branch trigger
+
+- Replaced exact-size reserve-on-every-append in GLES compatible-draw batches with geometric vertex capacity growth. Regression passed: 1,000 triangle appends preserved 3,000 vertices with at most eight capacity changes. No device timing comparison yet.
+- Added `android-new` to relevant-push workflow triggers and a renderer component test step. These checks do not lift or execute the Battle Realms binary.
+- Reconciled stale source-migration status: public branch now contains runtime/launcher/tools/tests/build metadata; private builder remains untouched and no new APK was produced.

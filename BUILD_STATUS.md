@@ -2,6 +2,15 @@
 
 Updated 2026-11-27.
 
+## Superseding status on `android-new`
+
+- `android-new` is based on `ci/android-static-recompilation` at `c35e552`; `main` is untouched. The public repository now includes the reviewed runtime/Android source snapshot and build metadata. The public source-safety workflow passed on `c35e552`; that is not an ARM64/APK or gameplay result.
+- The private builder is outside this task's authorization and was not modified or triggered. Its most recent available attempt predates this branch and stopped at the missing lifted CMake recipe; `tools/lifted/CMakeLists.txt` is now in the public source snapshot. A fresh BattleRealms cloud build is still unverified.
+- Existing private APK: `E:\BattleRealmsRecomp\work\installed_battlerealms.apk` (192,614,175 bytes, 2026-11-26). Saved `work\battle_realms_device_trace.txt` records guest entry at `0x006a2441` and first frame 1.684 s after guest start. This is historical device evidence, not a current install or proof of correct skirmish rendering.
+- Saved foreground windows in `work\after_play_logcat.txt` show 12.17–13.29 presented FPS, 75.3–82.3 ms average frame time, 66.3–72.1 ms guest CPU/frame, 41.5–41.8 ms GPU batch-queue time/frame and 11.5–12.4 ms framebuffer conversion/frame. They are not a controlled before/after comparison and are not labeled as skirmish evidence.
+- This branch changes compatible GLES batch accumulation to geometric capacity growth. Its focused test passes with 3,000 vertices and at most eight capacity changes. Device impact remains unmeasured.
+- Relevant pushes to `android-new` now enter the public source-safety/component workflow. That workflow cannot access game inputs or emit a game-derived APK.
+
 ## Current state
 
 - Repository visibility: public, changed only after auditing the full one-commit history and README.
