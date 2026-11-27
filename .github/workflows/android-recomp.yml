@@ -66,6 +66,9 @@ jobs:
       - name: Check Python tools compile
         run: python3 -m compileall -q tools
 
+      - name: Test runtime-observed guest root validation
+        run: python3 tests/runtime_roots_smoke.py
+
       - name: Run D3D7 renderer component regression
         run: bash tests/run_renderer_component_tests.sh
 

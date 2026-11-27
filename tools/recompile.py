@@ -12,6 +12,7 @@ import sys
 import time
 
 import pefile
+from runtime_roots import read_runtime_roots
 
 
 def sha256(path: Path) -> str:
@@ -40,6 +41,8 @@ def main() -> int:
     ap.add_argument("--workspace", type=Path, required=True, help="all outputs go here")
     ap.add_argument("--units", type=int, default=96)
     ap.add_argument("--pcrecomp-catalog", type=Path, help="optional PCRecomp disasm32 JSON; only entry_kind=start is merged")
+    ap.add_argument("--runtime-roots", type=Path,
+                    help="optional text file of runtime-observed guest entry VAs; executable-section addresses only")
     ns = ap.parse_args()
     exe, analyzer, lifter, ws = (p.resolve() for p in (ns.exe, ns.analyze, ns.lift, ns.workspace))
     if ns.units < 1:
@@ -80,6 +83,7 @@ def main() -> int:
     ra3_candidates = {int(line, 16) for line in ra3_list.read_text().splitlines() if line.strip()}
 
     pcrecomp_starts: set[int] = set()
+    pcrecomp_alias_addresses: set[int] = set()
     pcrecomp_aliases = 0
     if ns.pcrecomp_catalog:
         pc = json.loads(ns.pcrecomp_catalog.resolve().read_text(encoding="utf-8"))
@@ -92,15 +96,31 @@ def main() -> int:
                     pcrecomp_starts.add(va)
             elif item.get("entry_kind") == "alias":
                 pcrecomp_aliases += 1
+                va = int(item["address"])
+                if is_code_va(va):
+                    pcrecomp_alias_addresses.add(va)
 
     entry = base + pe.OPTIONAL_HEADER.AddressOfEntryPoint
+    runtime_roots = read_runtime_roots(ns.runtime_roots, is_code_va)
+    if ns.pcrecomp_catalog:
+        known_code_entries = ra3_candidates | pcrecomp_starts | pcrecomp_alias_addresses
+        if is_code_va(entry):
+            known_code_entries.add(entry)
+        unvalidated = set(runtime_roots) - known_code_entries
+        if unvalidated:
+            values = ", ".join(f"0x{va:08X}" for va in sorted(unvalidated))
+            raise RuntimeError(f"runtime roots are absent from RA3 and PCRecomp code-entry analysis: {values}")
+
     exports: dict[int, list[str]] = {}
     for item in pe.DIRECTORY_ENTRY_EXPORT.symbols:
         if item.address and is_code_va(base + item.address):
             name = item.name.decode("ascii", errors="replace") if item.name else f"ordinal_{item.ordinal}"
             exports.setdefault(base + item.address, []).append(name)
     export_vas = set(exports)
-    roots = set(export_vas)
+    metadata_roots = set(export_vas)
+    if is_code_va(entry):
+        metadata_roots.add(entry)
+    roots = set(export_vas) | set(runtime_roots)
     if is_code_va(entry):
         roots.add(entry)
     all_funcs = sorted(ra3_candidates | roots | pcrecomp_starts)
@@ -118,14 +138,17 @@ def main() -> int:
         "exports_already_in_ra3_catalog": len(export_vas & ra3_candidates),
         "pcrecomp_start_candidates": len(pcrecomp_starts),
         "pcrecomp_alias_entries_excluded": pcrecomp_aliases,
+        "runtime_observed_roots_added": len(set(runtime_roots) - ra3_candidates - pcrecomp_starts),
         "export_roots_added": len(added_exports),
         "union_function_starts": len(all_funcs),
-        "metadata_confirmed_roots": len(roots),
-        "candidate_starts_without_pe_metadata": len(set(all_funcs) - roots),
+        "runtime_observed_roots": len(runtime_roots),
+        "metadata_confirmed_roots": len(metadata_roots),
+        "candidate_starts_without_pe_metadata": len(set(all_funcs) - metadata_roots - set(runtime_roots)),
         "function_starts": [
             {"va": f"0x{va:08X}",
              "evidence": (["PE entry point"] if va == entry else []) +
                          (["PE export"] if va in export_vas else []) +
+                         (["runtime-observed guest dispatch target"] if va in runtime_roots else []) +
                          (["RA3 analyzer candidate (mixed direct-flow and heuristics)"] if va in ra3_candidates else []) +
                          (["PCRecomp start candidate (heuristic; may be data-pointer-derived)"] if va in pcrecomp_starts else []),
              "names": exports.get(va, [])}
