@@ -69,6 +69,12 @@ jobs:
       - name: Test runtime-observed guest root validation
         run: python3 tests/runtime_roots_smoke.py
 
+      - name: Test dispatch-site diagnostics and differential suite tooling
+        run: |
+          python3 tests/dispatch_site_trace_smoke.py
+          python3 tests/unicorn_differential_suite_smoke.py
+          python3 -m py_compile tools/trace_generated_dispatch_sites.py tools/compare_lifted_x86_block.py
+
       - name: Run D3D7 renderer component regression
         run: bash tests/run_renderer_component_tests.sh
 

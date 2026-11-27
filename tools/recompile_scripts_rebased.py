@@ -55,6 +55,8 @@ def main() -> int:
     parser.add_argument("--output-name", default="rebased_batch96")
     parser.add_argument("--main-dir", type=Path, default=Path("generated/main96_hybrid"),
                         help="existing main-EXE generated directory to combine into dispatch")
+    parser.add_argument("--additional-main-dir", type=Path, action="append", default=[],
+                        help="additional incremental main-PE root output to include in dispatch")
     parser.add_argument("--base-start", type=lambda value: int(value, 0), default=0x20000000)
     parser.add_argument("--base-limit", type=lambda value: int(value, 0), default=0x70000000)
     args = parser.parse_args()
@@ -128,11 +130,15 @@ def main() -> int:
     combined_manifest = combined_dir / "manifest.json"
     merger = Path(__file__).with_name("merge_lifted_tables.py").resolve()
     main_dir = args.main_dir if args.main_dir.is_absolute() else workspace / args.main_dir
+    additional_main_dirs = [path if path.is_absolute() else workspace / path
+                            for path in args.additional_main_dir]
     merge_command = [sys.executable, str(merger),
                      "--generated-root", str(generated_root),
                      "--main-dir", str(main_dir.resolve()),
                      "--scripts-dir", str(generated_manifest.parent),
                      "--output", str(combined_table), "--manifest", str(combined_manifest)]
+    for extra_dir in additional_main_dirs:
+        merge_command.extend(["--additional-main-dir", str(extra_dir.resolve())])
     merge_seconds = run_logged(merge_command, analysis / "merge_rebased_dispatch_table.log",
                                env, workspace)
     combined_data = json.loads(combined_manifest.read_text(encoding="utf-8"))

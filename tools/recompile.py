@@ -23,6 +23,17 @@ def sha256(path: Path) -> str:
     return h.hexdigest()
 
 
+def generated_hashes(directory: Path) -> dict[str, str]:
+    return {
+        path.name: sha256(path)
+        for path in sorted(directory.glob("lifted_*.cpp"))
+        if path.is_file()
+    } | {
+        name: sha256(directory / name)
+        for name in ("lifted_decl.h", "lifted_table.cpp")
+    }
+
+
 def run_logged(args: list[str], log: Path, env: dict[str, str], cwd: Path) -> str:
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("wb") as out:
@@ -43,6 +54,10 @@ def main() -> int:
     ap.add_argument("--pcrecomp-catalog", type=Path, help="optional PCRecomp disasm32 JSON; only entry_kind=start is merged")
     ap.add_argument("--runtime-roots", type=Path,
                     help="optional text file of runtime-observed guest entry VAs; executable-section addresses only")
+    ap.add_argument("--runtime-roots-incremental", action="store_true",
+                    help="leave observed roots out of the bulk lift; lift them into a separate small TU")
+    ap.add_argument("--reuse-generated", action="store_true",
+                    help="reuse a matching, hash-validated generated bulk lift in the workspace")
     ns = ap.parse_args()
     exe, analyzer, lifter, ws = (p.resolve() for p in (ns.exe, ns.analyze, ns.lift, ns.workspace))
     if ns.units < 1:
@@ -120,7 +135,7 @@ def main() -> int:
     metadata_roots = set(export_vas)
     if is_code_va(entry):
         metadata_roots.add(entry)
-    roots = set(export_vas) | set(runtime_roots)
+    roots = set(export_vas) | (set() if ns.runtime_roots_incremental else set(runtime_roots))
     if is_code_va(entry):
         roots.add(entry)
     all_funcs = sorted(ra3_candidates | roots | pcrecomp_starts)
@@ -158,28 +173,66 @@ def main() -> int:
     }
     (work / "function_catalog.json").write_text(json.dumps(catalog, indent=2) + "\n", encoding="utf-8")
     (work / "functions.txt").write_text("".join(f"{va:08x}\n" for va in all_funcs), encoding="ascii")
-    lift_started = time.perf_counter()
-    lift_log = run_logged([str(lifter), str(exe), str(work / "functions.txt"),
-                           "--emit-dir", str(generated), str(ns.units)],
-                          analysis / f"ra3_lift_main{ns.units}_{seed_mode}.log", env, ws)
     compat_patcher = Path(__file__).with_name("patch_generated_x86_compat.py").resolve()
     compat_log_path = analysis / f"patch_generated_x86_compat_main{ns.units}_{seed_mode}.log"
-    compat_log = run_logged([sys.executable, str(compat_patcher), str(generated)],
-                            compat_log_path, env, ws)
-    lift_elapsed = time.perf_counter() - lift_started
-    generated_files = sorted(generated.glob("*"))
+    generation_cache = generated / "generation_cache.json"
+    cache_identity = {
+        "schema": 1,
+        "exe_sha256": sha256(exe),
+        "lifter_sha256": sha256(lifter),
+        "patcher_sha256": sha256(compat_patcher),
+        "generator_sha256": sha256(Path(__file__).resolve()),
+        "function_list_sha256": sha256(work / "functions.txt"),
+        "units": ns.units,
+        "seed_mode": seed_mode,
+    }
+    cached = None
+    if ns.reuse_generated and generation_cache.is_file():
+        try:
+            candidate = json.loads(generation_cache.read_text(encoding="utf-8"))
+            if (candidate.get("identity") == cache_identity and
+                    candidate.get("generated_sha256") == generated_hashes(generated)):
+                cached = candidate
+        except (OSError, ValueError, TypeError):
+            cached = None
+    lift_started = time.perf_counter()
+    if cached is not None:
+        lift_summary = cached.get("lift_summary")
+        compatibility_summary = cached.get("compatibility_patch_summary")
+        lift_elapsed = 0.0
+        cache_status = "hit"
+    else:
+        lift_log = run_logged([str(lifter), str(exe), str(work / "functions.txt"),
+                               "--emit-dir", str(generated), str(ns.units)],
+                              analysis / f"ra3_lift_main{ns.units}_{seed_mode}.log", env, ws)
+        compat_log = run_logged([sys.executable, str(compat_patcher), str(generated)],
+                                compat_log_path, env, ws)
+        lift_elapsed = time.perf_counter() - lift_started
+        lift_match = re.search(r"functions (\d+), fully lifted (\d+) \(([\d.]+)%\), instructions (\d+), unsupported (\d+) \(([\d.]+)%\)", lift_log)
+        lift_summary = list(lift_match.groups()) if lift_match else None
+        compatibility_summary = next(
+            (line.strip() for line in compat_log.splitlines() if line.startswith("patched ")),
+            "patched 0 instructions in 0 files",
+        )
+        cache_status = "miss"
+        cache_payload = {
+            "identity": cache_identity,
+            "lift_summary": lift_summary,
+            "compatibility_patch_summary": compatibility_summary,
+            "generated_sha256": generated_hashes(generated),
+        }
+        generation_cache.write_text(json.dumps(cache_payload, indent=2) + "\n", encoding="utf-8")
+    generated_files = [p for p in sorted(generated.glob("*"))
+                       if p.is_file() and p.name != "generation_cache.json"]
     generated_bytes = sum(p.stat().st_size for p in generated_files if p.is_file())
-    lift_match = re.search(r"functions (\d+), fully lifted (\d+) \(([\d.]+)%\), instructions (\d+), unsupported (\d+) \(([\d.]+)%\)", lift_log)
     stats = {
         "units": ns.units,
         "generation_seconds": round(lift_elapsed, 3),
+        "generation_cache": cache_status,
         "generated_file_count": len(generated_files),
         "generated_bytes": generated_bytes,
-        "lift_summary": lift_match.groups() if lift_match else None,
-        "compatibility_patch_summary": next(
-            (line.strip() for line in compat_log.splitlines() if line.startswith("patched ")),
-            "patched 0 instructions in 0 files",
-        ),
+        "lift_summary": lift_summary,
+        "compatibility_patch_summary": compatibility_summary,
         "analyzer_summary": next((x.strip() for x in analyze_log.splitlines() if x.startswith("functions:")), None),
     }
     (work / f"manifest_main{ns.units}_{seed_mode}.json").write_text(json.dumps({"catalog": {k: v for k, v in catalog.items() if k != "function_starts"}, "generation": stats}, indent=2) + "\n", encoding="utf-8")

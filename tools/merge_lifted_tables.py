@@ -38,6 +38,8 @@ def main() -> int:
     parser.add_argument("--generated-root", type=Path, required=True,
                         help="common generated/ directory, used for stable include paths")
     parser.add_argument("--main-dir", type=Path, required=True)
+    parser.add_argument("--additional-main-dir", type=Path, action="append", default=[],
+                        help="additional independently generated main-PE root tables")
     parser.add_argument("--scripts-dir", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--manifest", type=Path, required=True)
@@ -45,10 +47,11 @@ def main() -> int:
 
     root = args.generated_root.resolve()
     main_dir = args.main_dir.resolve()
+    additional_main_dirs = [path.resolve() for path in args.additional_main_dir]
     scripts_dir = args.scripts_dir.resolve()
     output = args.output.resolve()
     manifest = args.manifest.resolve()
-    for path in (main_dir, scripts_dir, output, manifest):
+    for path in (main_dir, *additional_main_dirs, scripts_dir, output, manifest):
         try:
             path.relative_to(root)
         except ValueError as exc:
@@ -60,6 +63,12 @@ def main() -> int:
     if not main_table.is_file() or not main_decl.is_file():
         parser.error("main lifted_table.cpp and lifted_decl.h must exist")
     tables.append((main_table, main_decl, read_table(main_table)))
+    for extra_dir in additional_main_dirs:
+        table = extra_dir / "lifted_table.cpp"
+        declaration = extra_dir / "lifted_decl.h"
+        if not table.is_file() or not declaration.is_file():
+            parser.error(f"additional main lift directory is incomplete: {extra_dir}")
+        tables.append((table, declaration, read_table(table)))
 
     script_manifest_path = scripts_dir / "manifest.json"
     script_manifest = json.loads(script_manifest_path.read_text(encoding="utf-8"))

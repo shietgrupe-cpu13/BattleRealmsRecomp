@@ -1,5 +1,20 @@
 # Changelog
 
+## 2026-11-28 — Targeted interior-dispatch trace preparation
+
+- Inspected the existing generated `f_006a1240` without relifting: `0x006A13A0` has local routes at guest jumps `0x006A1275` and `0x006A1294`; `0x006A128D` contains a fallback `ICALL` when its local case does not match. This is candidate static cause, not a captured runtime cause.
+- Added a disposable generated-TU overlay and runtime JSONL/logcat records for the exact dispatch target, guest caller/IP, parent, transfer kind and local-vs-dispatch route. The overlay did not modify the reusable generated lift.
+- Expanded the Unicorn comparison command to run reusable multi-case suites. Existing PE-vs-lifted cases for 32–35 bytes passed, including registers, memory and return state (0.285669 s); local trace/differential harness tests and C++ syntax checks passed.
+- Private diagnostic workflow is staged to omit `0x006A13A0` from the dispatcher and retain the two confirmed earlier targets, allowing the real fallback to be observed instead of masking it with a standalone root. GitHub Actions and Android runtime results are pending; no device is connected yet.
+- `0x006A72ED` remains untouched. No gameplay or dispatch fix is claimed until a fresh trace identifies the executed site.
+
+## 2026-11-27 - Indirect-target classification and Unicorn differential proof
+
+- Compared the existing Ghidra export with the 34,774-entry bulk dispatch table: 13,733 of 13,743 executable Ghidra entries are registered; the 10 remaining entries are review candidates. The 1,199 broader candidate set is not auto-promoted to lift roots.
+- Classified `0x006A13A0` as an interior computed-jump block inside registered `0x006A1240`; coverage output now recommends keeping it inside the parent.
+- Corrected the POC to execute the original x86 parent in Unicorn. Counts 32 to 35 selected their expected tail blocks and matched lifted registers, guest-memory changes and return state. The isolated block differential and incremental/coverage smoke tests passed.
+- Evidence is local under `E:\BattleRealmsRecomp\analysis`. No bulk relift, APK build, Android runtime claim, or gameplay change.
+
 ## 2026-11-27 — GitHub Actions cloud build bootstrap
 
 - Audited the new remote's complete history; it contained only one README commit, no game data, credentials, source, or third-party implementation code.

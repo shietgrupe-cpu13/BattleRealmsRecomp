@@ -21,6 +21,12 @@ def sha256(path: Path) -> str:
     return digest.hexdigest()
 
 
+def generated_hashes(directory: Path) -> dict[str, str]:
+    paths = [path for path in sorted(directory.glob("lifted_*.cpp")) if path.is_file()]
+    paths.extend(directory / name for name in ("lifted_decl.h", "lifted_table.cpp"))
+    return {path.name: sha256(path) for path in paths}
+
+
 def run_logged(command: list[str], log: Path, env: dict[str, str], cwd: Path) -> str:
     log.parent.mkdir(parents=True, exist_ok=True)
     with log.open("wb") as output:
@@ -52,6 +58,7 @@ def main() -> int:
     env.update({"TEMP": str(tmp), "TMP": str(tmp), "TMPDIR": str(tmp),
                 "PYTHONPYCACHEPREFIX": str(workspace / "cache" / "pycache"),
                 "PIP_CACHE_DIR": str(workspace / "cache" / "pip")})
+    compat_patcher = Path(__file__).with_name("patch_generated_x86_compat.py").resolve()
 
     rows: list[dict[str, object]] = []
     candidates = sorted(scripts.glob("*.dll"), key=lambda p: p.name.casefold())
@@ -107,20 +114,51 @@ def main() -> int:
             function_list.write_text("".join(f"{va:08x}\n" for va in starts), encoding="ascii")
             out_dir = generated / key
             out_dir.mkdir(parents=True, exist_ok=True)
-            lift_text = run_logged([str(lifter), str(dll), str(function_list),
-                                    "--emit-dir", str(out_dir), str(units)],
-                                   analysis / f"{key}.lift.log", env, workspace)
-            compat_patcher = Path(__file__).with_name("patch_generated_x86_compat.py").resolve()
-            compat_text = run_logged([sys.executable, str(compat_patcher), str(out_dir)],
-                                     analysis / f"{key}.compat.log", env, workspace)
-            match = re.search(r"functions (\d+), fully lifted (\d+) \(([\d.]+)%\), instructions (\d+), unsupported (\d+) \(([\d.]+)%\)", lift_text)
+            module_cache = out_dir / "generation_cache.json"
+            cache_identity = {
+                "schema": 1, "rebased_dll_sha256": sha256(dll),
+                "analyzer_sha256": sha256(analyzer), "lifter_sha256": sha256(lifter),
+                "patcher_sha256": sha256(compat_patcher),
+                "generator_sha256": sha256(Path(__file__).resolve()),
+                "function_list_sha256": sha256(function_list), "units": units,
+            }
+            cached = None
+            if module_cache.is_file():
+                try:
+                    candidate = json.loads(module_cache.read_text(encoding="utf-8"))
+                    if (candidate.get("identity") == cache_identity and
+                            candidate.get("generated_sha256") == generated_hashes(out_dir)):
+                        cached = candidate
+                except (OSError, ValueError, TypeError):
+                    cached = None
+            if cached is not None:
+                lift_summary = cached.get("lift_summary")
+                compatibility_summary = cached.get("compatibility_patch_summary")
+                cache_status = "hit"
+            else:
+                lift_text = run_logged([str(lifter), str(dll), str(function_list),
+                                        "--emit-dir", str(out_dir), str(units)],
+                                       analysis / f"{key}.lift.log", env, workspace)
+                compat_text = run_logged([sys.executable, str(compat_patcher), str(out_dir)],
+                                         analysis / f"{key}.compat.log", env, workspace)
+                match = re.search(r"functions (\d+), fully lifted (\d+) \(([\d.]+)%\), instructions (\d+), unsupported (\d+) \(([\d.]+)%\)", lift_text)
+                lift_summary = list(match.groups()) if match else None
+                compatibility_summary = next(
+                    (line.strip() for line in compat_text.splitlines() if line.startswith("patched ")),
+                    "patched 0 instructions in 0 files",
+                )
+                module_cache.write_text(json.dumps({
+                    "identity": cache_identity,
+                    "lift_summary": lift_summary,
+                    "compatibility_patch_summary": compatibility_summary,
+                    "generated_sha256": generated_hashes(out_dir),
+                }, indent=2) + "\n", encoding="utf-8")
+                cache_status = "miss"
             output_files = sorted(out_dir.glob("*"))
             row.update(catalog={k: v for k, v in catalog.items() if k != "function_starts"},
-                       lift_summary=match.groups() if match else None,
-                       compatibility_patch_summary=next(
-                           (line.strip() for line in compat_text.splitlines() if line.startswith("patched ")),
-                           "patched 0 instructions in 0 files",
-                       ),
+                       lift_summary=lift_summary,
+                       compatibility_patch_summary=compatibility_summary,
+                       generation_cache=cache_status,
                        generated_files=len(output_files),
                        generated_bytes=sum(f.stat().st_size for f in output_files if f.is_file()),
                        analyzer_summary=next((line.strip() for line in analyze_text.splitlines()

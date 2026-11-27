@@ -1,12 +1,34 @@
 ﻿# AI handoff — BattleRealmsRecomp recovery
 
-Updated 2026-11-27 (Asia/Shanghai), branch `android-new`.
+Updated 2026-11-28 (Asia/Shanghai). Current checkout: `perf/incremental-lifting`; preserve the existing incremental-lift work and generated output under `E:\BattleRealmsRecomp`.
+
+## Current checkpoint — 0x006A13A0 dispatch-site diagnostics
+
+- The existing full host lift is available at `E:\BattleRealmsRecomp\generated\main96_hybrid` (97 split C++ files, about 131 MB total). No relift was done. The original executable at `work\windows_reference_copy\Battle_Realms_F.exe` still matches SHA-256 `bc0e026e906faab266a58d2f02d5015f4a21937c6a0669d934b53d21836701f0`.
+- Reading the actual generated `lifted_45.cpp` shows `f_006a1240` has local jump-table labels for `0x006A13A0` at `0x006A1275` and `0x006A1294`. A separate computed jump at `0x006A128D` has only a local case for `0x006A12DC` and otherwise falls through to `ICALL(t)`. This is a candidate dispatch route, not proof that it produced the earlier Android failure; the six Ghidra xrefs still identify the parent function and exact candidate sites.
+- Added `tools/trace_generated_dispatch_sites.py`, which copies only the TU owning `f_006a1240` into a diagnostic overlay and annotates its computed transfers with exact parent, guest IP, transfer kind and selected route for target `0x006A13A0`. The reusable generated source/cache is not modified. On the existing full lift it found the 3 relevant lowered sites above. `g++ -fsyntax-only` passed for the overlay TU and `runtime/lift_dispatch.cpp`.
+- Added `runtime/guest_dispatch_diagnostics.h` and runtime log context so Android exported JSONL/logcat records include target, caller IP, guest IP, parent, `indirect-jmp`, route, ESP/EBP; a dispatch failure repeats the same call-site context. Android logger already writes through the append-mode diagnostics sink with pid/tid/attempt ID.
+- The private Actions diagnostic workflow is changed to omit `0x006A13A0` from the diagnostic dispatch table while retaining the two previously observed targets `0x006A12DC`/`0x006A13AC`. This deliberately exposes any remaining dispatcher fallback and does not register the interior block as a new function. The trace overlay and site manifest are prepared without altering cached bulk output. This workflow has not yet been pushed or run.
+- Expanded `compare_lifted_x86_block.py` to run multi-case JSON suites with per-case observable-state selection. With the verified executable and existing compiled parent runner, sizes 32–35 all passed registers, memory writes and return state in 0.285669 seconds. No Android device is currently connected (`adb devices -l` returned empty), so no fresh runtime trace or device result exists yet.
+- Focused tests passed: runtime-root validation, incremental root-cache smoke, dispatch coverage, dispatch-site trace smoke, multi-case differential harness smoke, Python bytecode compilation, and both targeted C++ syntax checks. Existing four-case original-x86/compiled-lifted comparison also passed (0.304883 s).
+- Next: push the source branch and authorized private workflow update; run the diagnostic APK build in GitHub Actions; install/run after a device connects; use the logged site/route to decide whether to add a missing local block edge or repair another dispatch path. Leave `0x006A72ED` unchanged.
+
+## Historical analysis checkpoint — indirect target PoC (2026-11-27)
+
+- The authenticated `docs/ANDROID_RECOMP_RESEARCH.md` was read in full at commit `2ef0e18d45a24c5986bb336276582a961d095b47`. The immediate low-cost gap chosen was candidate classification plus x86-vs-lifted validation; no APK, bulk relift, or new tool installation was done in this checkpoint.
+- Ghidra lists 13,743 executable function entries; the bulk dispatch table has 34,774 entries, and contains 13,733 of those Ghidra entries. Ten Ghidra entries and 1,199 total executable candidate addresses need review; these counts are not coverage percentages because the dispatch table also includes non-Ghidra roots and interior code paths.
+- A targeted scan of existing split C++ took 1.911 seconds: 9 of the 10 missing Ghidra entries already occur as instruction labels inside other generated function bodies. Only `0x006A72ED` had no generated-source occurrence; Ghidra gives it no incoming xrefs, and its short body calls `__local_unwind2`. Reachability remains unproven, so it was not lifted or registered.
+- `0x006A13A0` is not a Ghidra function entry. Ghidra records it as an intra-body computed-jump destination in registered `0x006A1240`; the lifted parent includes the four destination labels and jump-table switch. `analyze_dispatch_coverage.py` now classifies proven interior computed targets as `intra_function_control_flow_target` and recommends keeping them in the parent rather than creating dispatch roots.
+- Differential test: original PE x86 under Unicorn and already-compiled lifted `f_006a1240` passed counts 32–35, taking targets `0x006A1398`, `0x006A13A0`, `0x006A13AC`, `0x006A13C0`; registers, changed guest memory and return state matched in all four cases. The separate one-byte `0x006A13A0` leaf test still passes registers, flags, memory, return and instruction sequence. Final volatile flags are deliberately not asserted for the parent test.
+- `tools/analyze_dispatch_coverage.py --generated-dir` now records generated C++ owner functions for missing Ghidra entries and runtime targets, with measured scan time; missing entries with existing code require owner review before dispatcher changes. Focused tests passed: `dispatch_coverage_smoke.py`, `incremental_runtime_lift_smoke.py`. The parent-runner binary and lifted slice predate this checkpoint; no native code was rebuilt.
+- Artifacts are private/local under `E:\BattleRealmsRecomp\analysis\`: `dispatch_coverage_6a13a0_poc.json`, `diff_6a1240_jump_targets.json`, and `diff_6a13a0_unicorn_vs_lift.json`. The source executable was read only. No device, APK or gameplay validation occurred.
+- Next: determine whether the earlier runtime dispatch report for `0x006A13A0` came from this exact switch path; if not, capture the distinct dispatch site/caller from a fresh host trace. Investigate `0x006A72ED` only if runtime or SEH evidence makes it relevant.
 
 ## Current state and restrictions
 
 - Public work branch: `shietgrupe-cpu13/BattleRealmsRecomp:android-new`, created from `ci/android-static-recompilation` at `c35e552`. `main` is untouched.
 - The public branch carries the reviewed runtime, Android launcher, renderer, tools, host smoke tests and lifted build metadata. Game executables/assets, generated game-derived C++, local build output, private logs and APKs remain excluded.
-- Do not modify or trigger the companion private repository without explicit user authorization. Do not run heavy local builds.
+- This task has explicit authorization to update the private builder workflow and run one diagnostic Android Actions build. Keep generated game code and artifacts private. Do not run heavy local builds.
 - Public source-safety run `45873981727` passed on `c35e552`; this was not a BattleRealms lift, ARM64 library, APK or gameplay test.
 
 ## Latest implementation and evidence

@@ -3,6 +3,7 @@
 #include "ra3_guest_bridge.h"
 #include "win32_base.h"
 #include "android_diagnostics.h"
+#include "guest_dispatch_diagnostics.h"
 #if defined(__ANDROID__) && defined(BR_ANDROID_GUEST_PROFILE)
 #include "android_guest_profiler.h"
 #endif
@@ -25,6 +26,7 @@ namespace {
 std::atomic<GuestImportLookup> gImportLookup{nullptr};
 std::atomic<const void*> gImportContext{nullptr};
 std::atomic<const ImportDispatchRegistry*> gHandlers{nullptr};
+thread_local GuestDispatchTraceContext gGuestDispatchTrace{};
 
 bool traceImportedCalls()
 {
@@ -230,6 +232,53 @@ void logUnknownImportArguments(CPU* cpu, uint32_t stackPointer, const ApiImportS
 
 } // namespace
 
+GuestDispatchTraceContext enterGuestDispatchTrace(CPU* cpu, uint32_t target,
+	uint32_t parent, uint32_t instruction, const char* mechanism, const char* route)
+{
+	const GuestDispatchTraceContext previous = gGuestDispatchTrace;
+	if (target != 0x006a13a0u) return previous;
+	gGuestDispatchTrace = {target, parent, instruction, mechanism, route};
+	const uint32_t esp = cpu ? cpu->r[ESP] : 0u;
+	const uint32_t ebp = cpu ? cpu->r[EBP] : 0u;
+	std::fprintf(stderr,
+		"[br-dispatch-site] target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=%s esp=0x%08x ebp=0x%08x\n",
+		target, instruction, instruction, parent, mechanism ? mechanism : "unknown",
+		route ? route : "unknown", esp, ebp);
+#if defined(__ANDROID__)
+	br::runtime::androidDiagnosticLogPrint(ANDROID_LOG_ERROR, "BattleRealmsNative",
+		"dispatch-site target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=%s esp=0x%08x ebp=0x%08x",
+		target, instruction, instruction, parent, mechanism ? mechanism : "unknown",
+		route ? route : "unknown", esp, ebp);
+#endif
+	return previous;
+}
+
+void leaveGuestDispatchTrace(const GuestDispatchTraceContext& previous)
+{
+	gGuestDispatchTrace = previous;
+}
+
+GuestDispatchTraceContext currentGuestDispatchTrace()
+{
+	return gGuestDispatchTrace;
+}
+
+void traceGuestDispatchLocal(CPU* cpu, uint32_t target, uint32_t parent,
+	uint32_t instruction, const char* mechanism)
+{
+	if (target != 0x006a13a0u) return;
+	const uint32_t esp = cpu ? cpu->r[ESP] : 0u;
+	const uint32_t ebp = cpu ? cpu->r[EBP] : 0u;
+	std::fprintf(stderr,
+		"[br-dispatch-site] target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=local-block esp=0x%08x ebp=0x%08x\n",
+		target, instruction, instruction, parent, mechanism ? mechanism : "unknown", esp, ebp);
+#if defined(__ANDROID__)
+	br::runtime::androidDiagnosticLogPrint(ANDROID_LOG_INFO, "BattleRealmsNative",
+		"dispatch-site target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=local-block esp=0x%08x ebp=0x%08x",
+		target, instruction, instruction, parent, mechanism ? mechanism : "unknown", esp, ebp);
+#endif
+}
+
 [[noreturn]] void dispatchFailure(CPU* cpu, uint32_t guestAddress, const char* reason)
 {
 	const uint32_t stackPointer = cpu ? cpu->r[ESP] : 0;
@@ -291,9 +340,25 @@ void logUnknownImportArguments(CPU* cpu, uint32_t stackPointer, const ApiImportS
 	br::runtime::androidDiagnosticLogPrint(ANDROID_LOG_FATAL, "BattleRealmsNative",
 		"guest dispatch failure target=0x%08x return=0x%08x stack=[%08x,%08x,%08x] EBP=0x%08x frames=[%08x,%08x,%08x] (ESP=0x%08x): %s",
 		guestAddress, returnAddress, stack1, stack2, stack3, frame, frame1, frame2, frame3, stackPointer, reason);
+	{
+	const auto dispatchTrace = br::runtime::currentGuestDispatchTrace();
+	if (dispatchTrace.target == guestAddress)
+		br::runtime::androidDiagnosticLogPrint(ANDROID_LOG_FATAL, "BattleRealmsNative",
+			"dispatch-failure target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=%s",
+			dispatchTrace.target, dispatchTrace.instruction, dispatchTrace.instruction, dispatchTrace.parent,
+			dispatchTrace.mechanism ? dispatchTrace.mechanism : "unknown",
+			dispatchTrace.route ? dispatchTrace.route : "unknown");
+	}
 	#endif
 	std::fprintf(stderr, "Battle Realms guest dispatch failure at 0x%08x (ESP=0x%08x): %s\n",
 		guestAddress, stackPointer, reason);
+	const auto dispatchTrace = br::runtime::currentGuestDispatchTrace();
+	if (dispatchTrace.target == guestAddress)
+		std::fprintf(stderr,
+			"Battle Realms guest dispatch site target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=%s\n",
+			dispatchTrace.target, dispatchTrace.instruction, dispatchTrace.instruction, dispatchTrace.parent,
+			dispatchTrace.mechanism ? dispatchTrace.mechanism : "unknown",
+			dispatchTrace.route ? dispatchTrace.route : "unknown");
 	const char* throwFailures = std::getenv("BR_THROW_FAILURES");
 	if (throwFailures && throwFailures[0] && throwFailures[0] != '0') {
 		char message[160]{};
