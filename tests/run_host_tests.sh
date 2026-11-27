@@ -14,6 +14,7 @@ python3 "$root/tests/runtime_roots_smoke.py"
 python3 "$root/tests/incremental_runtime_lift_smoke.py"
 python3 "$root/tests/dispatch_coverage_smoke.py"
 python3 "$root/tests/dispatch_site_trace_smoke.py"
+python3 "$root/tests/lift_object_inventory_smoke.py"
 python3 "$root/tests/unicorn_differential_suite_smoke.py"
 mkdir -p "$root/analysis"
 cmake -S "$root/runtime/pe32_loader" -B "$build_dir" -G Ninja \
