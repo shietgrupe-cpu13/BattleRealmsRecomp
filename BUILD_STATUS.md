@@ -6,7 +6,10 @@ Updated 2026-11-27.
 
 - Source commit `658e4e2249383c808bbd6b8399fee46dd66c51ea` passed public Actions run [46144218543](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46144218543). Public source/renderer regressions passed; the game-free synthetic ARM64 runtime/lift pipeline passed in 1m35s.
 - The run did not fetch Battle Realms inputs, compile the full game lift, package an APK, or verify device FPS/rendering. No APK hash exists for this change yet.
-- Next: after merge to the workflow-approved diagnostic branch, run one protected-input APK build with the backward-jump correction, GLES submission/diagnostic optimizations, and bounded terrain evidence collection.
+- Merge-branch public run [46144785040](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46144785040) passed at `371ff443bbe9c4ac050fa48a28fd9dccd62f0b0f`.
+- Latest stored private APK is from successful public run [46137256407](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46137256407), source commit `dafedbcc7f7859eb295d875852de760ea680fb73`, SHA-256 `8834c7290f2dd3a0bd6c349b1c8a07c969cc45c45c622a9cf580b03180539663`, size 84,584,451 bytes. It is not device-verified and predates the GLES batching/diagnostic changes.
+- Protected-input run [46144965297](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46144965297) passed input hash, host tests, lift, ARM64 object inventory and APK packaging, but failed at private artifact storage because `GH_TOKEN` was not exported for `gh api meta`. No artifact is available and the runner copy is gone.
+- Backport `c3b1200` adds the already-main-merged PR #3 `GH_TOKEN` fix to both private upload steps. After public CI and merge, rerun once; the next run must confirm the deploy-key push and provide a private APK SHA-256 before it is considered delivered.
 
 ## Superseding status on `android-new`
 
