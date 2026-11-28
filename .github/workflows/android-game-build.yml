@@ -362,6 +362,7 @@ jobs:
       - name: Store APK and diagnostics in the private repository
         if: success()
         env:
+          GH_TOKEN: ${{ github.token }}
           BR_PRIVATE_OUTPUTS_DEPLOY_KEY: ${{ secrets.BR_PRIVATE_OUTPUTS_DEPLOY_KEY }}
         shell: bash
         run: |
@@ -416,6 +417,7 @@ jobs:
       - name: Store restricted failure diagnostics privately
         if: failure() && github.event_name == 'workflow_dispatch'
         env:
+          GH_TOKEN: ${{ github.token }}
           BR_PRIVATE_OUTPUTS_DEPLOY_KEY: ${{ secrets.BR_PRIVATE_OUTPUTS_DEPLOY_KEY }}
         shell: bash
         run: |

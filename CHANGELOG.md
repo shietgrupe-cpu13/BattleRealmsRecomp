@@ -7,6 +7,12 @@
 - Renderer component tests and Android ARM64 syntax validation passed. Public Actions run [46144218543](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46144218543) passed on commit `658e4e2`; its synthetic ARM64 pipeline is game-free and is not an APK build.
 - Device FPS delta and terrain correction remain unverified; this change has not yet been packaged.
 
+## 2026-11-28 - Protected APK build reached packaging; private upload fix
+
+- Run [46144965297](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46144965297) passed input verification, host tests, lifting, ARM64 object inventory and APK packaging. Artifact storage and failure-report storage failed because `gh api meta` lacked `GH_TOKEN`; no APK was retained and no hash is available.
+- Backported the previously merged PR #3 fix as `c3b1200`, exporting `${{ github.token }}` to both private upload steps. FPS and terrain output remain unverified until a stored APK is tested.
+- The latest retrievable private APK remains run [46137256407](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46137256407), SHA-256 `8834c7290f2dd3a0bd6c349b1c8a07c969cc45c45c622a9cf580b03180539663` (84,584,451 bytes; not device-verified).
+
 ## 2026-11-28 - Public CI cache evidence
 
 - Added machine-readable ccache statistics to the public-safe pipeline artifact and ignored downloaded `artifacts/` locally so CI reports are not accidentally committed.
