@@ -5,6 +5,7 @@ on:
     branches: ["**"]
     paths:
       - ".github/workflows/android-recomp.yml"
+      - ".github/workflows/android-game-build.yml"
       - "runtime/**"
       - "tools/**"
       - "android/**"
@@ -15,6 +16,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/android-recomp.yml"
+      - ".github/workflows/android-game-build.yml"
       - "runtime/**"
       - "tools/**"
       - "android/**"

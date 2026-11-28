@@ -1,0 +1,447 @@
+name: BattleRealmsRecomp game build (public runner, private inputs)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: br-game-build
+  cancel-in-progress: true
+
+jobs:
+  build:
+    if: github.event_name == 'workflow_dispatch' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/diag/android-terrain-texture-evidence')
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    env:
+      SOURCE_REPO: shietgrupe-cpu13/BattleRealmsRecomp
+      GRADLE_OPTS: -Dorg.gradle.daemon=false -Dorg.gradle.parallel=true
+    steps:
+      - name: Check out BattleRealmsRecomp source
+        uses: actions/checkout@v4
+
+      - name: Fetch restricted game inputs from the private repository
+        uses: actions/checkout@v4
+        with:
+          repository: shietgrupe-cpu13/BattleRealmsRecomp-Private-Build
+          ref: main
+          path: restricted-inputs
+          ssh-key: ${{ secrets.BR_PRIVATE_INPUTS_DEPLOY_KEY }}
+          sparse-checkout: inputs
+          sparse-checkout-cone-mode: true
+
+      - name: Stage private inputs for existing build scripts
+        run: ln -s "$GITHUB_WORKSPACE/restricted-inputs/inputs" "$GITHUB_WORKSPACE/inputs"
+
+      - name: Verify private inputs and executable identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f inputs/Battle_Realms_F.exe
+          test -d inputs/Scripts
+          test -f inputs/pcrecomp_main_functions.json
+          test -f inputs/runtime_dispatch_roots.txt
+          actual=$(sha256sum inputs/Battle_Realms_F.exe | cut -d' ' -f1)
+          expected=bc0e026e906faab266a58d2f02d5015f4a21937c6a0669d934b53d21836701f0
+          [[ "$actual" == "$expected" ]] || { echo "Unexpected input executable hash" >&2; exit 1; }
+          [[ $(find inputs/Scripts -maxdepth 1 -type f -iname '*.dll' | wc -l) -gt 0 ]]
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          catalog = json.loads(Path("inputs/pcrecomp_main_functions.json").read_text())
+          assert catalog.get("exe", "").casefold() == "battle_realms_f.exe"
+          assert catalog.get("image_base") == 0x00400000
+          expected_roots = ["0x006A12DC", "0x006A13A0", "0x006A13AC"]
+          aliases = {row.get("address") for row in catalog.get("functions", [])
+                     if row.get("entry_kind") == "alias"}
+          assert all(int(root, 16) in aliases for root in expected_roots)
+          roots = [line.split("#", 1)[0].strip() for line in
+                   Path("inputs/runtime_dispatch_roots.txt").read_text().splitlines()]
+          assert [root for root in roots if root] == expected_roots
+          PY
+          echo "Private game input integrity check passed; restricted values omitted." >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: tools/requirements-ci.txt
+
+      - name: Install Python analysis dependencies
+        run: python -m pip install --upgrade pip -r tools/requirements-ci.txt
+
+      - name: Install native build tools
+        run: sudo apt-get update && sudo apt-get install -y build-essential ninja-build ccache
+
+      - name: Set up Java and Android SDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
+
+      - name: Install pinned Android SDK and NDK
+        run: |
+          sdkmanager 'platform-tools' 'platforms;android-34' 'build-tools;36.1.0' 'cmake;3.22.1' 'ndk;28.2.13676358'
+          yes | sdkmanager --licenses >/dev/null
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+          cache-disabled: true
+
+      - name: Restore public-safe compiler-tool cache
+        id: restore-tool-cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ${{ runner.temp }}/br-tool-ccache
+          key: br-tool-ccache-v1-${{ runner.os }}-ra3-b46328a6-cap04fd70b5-${{ hashFiles('tools/patch_ra3_backward_jump_tables.py') }}
+          restore-keys: |
+            br-tool-ccache-v1-${{ runner.os }}-ra3-b46328a6-cap04fd70b5-
+
+      - name: Fetch pinned lifting dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          export CCACHE_DIR="$RUNNER_TEMP/br-tool-ccache"
+          git clone https://github.com/blackorange-sketch/RA3-Native.git "$RUNNER_TEMP/RA3-Native"
+          git -C "$RUNNER_TEMP/RA3-Native" checkout b46328a6ec6f52ce20db61a73e9f7aab3c5b3b90
+          git clone https://github.com/capstone-engine/capstone.git "$RUNNER_TEMP/capstone-src"
+          git -C "$RUNNER_TEMP/capstone-src" checkout 04fd70b5456c20fc27d1f2b62d6ed0820fc6b081
+          mkdir -p references
+          ln -s "$RUNNER_TEMP/RA3-Native" references/RA3-Native
+          cmake -S "$RUNNER_TEMP/capstone-src" -B "$RUNNER_TEMP/capstone-build" -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache -DCAPSTONE_ARCHITECTURE_DEFAULT=OFF \
+            -DCAPSTONE_X86_SUPPORT=ON -DCAPSTONE_BUILD_SHARED_LIBS=OFF \
+            -DCAPSTONE_BUILD_TESTS=OFF -DCAPSTONE_BUILD_CSTOOL=OFF \
+            -DCAPSTONE_BUILD_CSTEST=OFF -DCAPSTONE_BUILD_LEGACY_TESTS=OFF
+          cmake --build "$RUNNER_TEMP/capstone-build" --parallel 2
+          ln -s "$RUNNER_TEMP/capstone-build" "$RUNNER_TEMP/capstone-src/b"
+          ccache c++ -O2 -std=c++17 -I"$RUNNER_TEMP/capstone-src/include" \
+            "$RUNNER_TEMP/RA3-Native/tools/analyze.cpp" \
+            "$RUNNER_TEMP/capstone-build/libcapstone.a" -o "$RUNNER_TEMP/analyze"
+          ccache c++ -O2 -std=c++17 -I"$RUNNER_TEMP/capstone-src/include" \
+            "$RUNNER_TEMP/RA3-Native/tools/lift.cpp" "$RUNNER_TEMP/RA3-Native/tools/lift_pe.cpp" \
+            "$RUNNER_TEMP/capstone-build/libcapstone.a" -o "$RUNNER_TEMP/lift_pe"
+          python3 tools/patch_ra3_backward_jump_tables.py "$RUNNER_TEMP/RA3-Native/tools/lift.cpp"
+          ccache c++ -O2 -std=c++17 -I"$RUNNER_TEMP/capstone-src/include" \
+            "$RUNNER_TEMP/RA3-Native/tools/lift.cpp" "$RUNNER_TEMP/RA3-Native/tools/lift_pe.cpp" \
+            "$RUNNER_TEMP/capstone-build/libcapstone.a" -o "$RUNNER_TEMP/lift_pe_backward"
+          ccache -s
+
+      - name: Save public-safe compiler-tool cache
+        if: success() && steps.restore-tool-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ runner.temp }}/br-tool-ccache
+          key: br-tool-ccache-v1-${{ runner.os }}-ra3-b46328a6-cap04fd70b5-${{ hashFiles('tools/patch_ra3_backward_jump_tables.py') }}
+
+      - name: Run BattleRealms host compatibility regression suite
+        env:
+          BR_GAME_EXE: ${{ github.workspace }}/inputs/Battle_Realms_F.exe
+          BR_GAME_SCRIPTS: ${{ github.workspace }}/inputs/Scripts
+          RA3_RUNTIME_DIR: ${{ runner.temp }}/RA3-Native/runtime
+          BR_HOST_TEST_BUILD_DIR: ${{ runner.temp }}/br-host-tests
+        run: |
+          set -euo pipefail
+          bash tests/run_host_tests.sh > "$RUNNER_TEMP/private-host-tests.log" 2>&1
+
+      - name: Lift original executable and script DLLs
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > "$RUNNER_TEMP/private-lift.log" 2>&1
+          temp="$RUNNER_TEMP/br-build"
+          python3 - "$GITHUB_WORKSPACE/inputs/runtime_dispatch_roots.txt" \
+            "$temp/analysis/diagnostic_runtime_roots.txt" <<'PY'
+          from pathlib import Path
+          import sys
+          source, output = map(Path, sys.argv[1:])
+          kept = []
+          for line in source.read_text().splitlines():
+              address = line.split("#", 1)[0].strip()
+              if address and int(address, 0) != 0x006A13A0:
+                  kept.append(line)
+          output.parent.mkdir(parents=True, exist_ok=True)
+          output.write_text("\n".join(kept) + "\n")
+          assert len([line for line in kept if line.split("#", 1)[0].strip()]) == 2
+          PY
+          python tools/recompile.py --exe "$GITHUB_WORKSPACE/inputs/Battle_Realms_F.exe" \
+            --analyze "$RUNNER_TEMP/analyze" --lift "$RUNNER_TEMP/lift_pe" \
+            --workspace "$temp" --units 96 \
+            --pcrecomp-catalog "$GITHUB_WORKSPACE/inputs/pcrecomp_main_functions.json" \
+            --runtime-roots "$GITHUB_WORKSPACE/inputs/runtime_dispatch_roots.txt" \
+            --runtime-roots-incremental --reuse-generated
+          python tools/lift_runtime_roots.py \
+            --exe "$GITHUB_WORKSPACE/inputs/Battle_Realms_F.exe" \
+            --lift "$RUNNER_TEMP/lift_pe" \
+            --roots "$temp/analysis/diagnostic_runtime_roots.txt" \
+            --base-dir "$temp/generated/main96_hybrid" \
+            --output-dir "$temp/generated/runtime_roots" \
+            --log "$temp/analysis/lift_runtime_roots.log"
+          printf '006a1240\n' > "$temp/analysis/backward_jump_fix_roots.txt"
+          mkdir -p "$temp/analysis/backward_jump_fix_generated"
+          "$RUNNER_TEMP/lift_pe_backward" "$GITHUB_WORKSPACE/inputs/Battle_Realms_F.exe" \
+            "$temp/analysis/backward_jump_fix_roots.txt" \
+            --emit-dir "$temp/analysis/backward_jump_fix_generated" 1 \
+            > "$temp/analysis/backward_jump_fix_lift.log" 2>&1
+          python tools/patch_generated_x86_compat.py \
+            "$temp/analysis/backward_jump_fix_generated"
+          python tools/extract_lifted_functions.py \
+            --main-dir "$temp/analysis/backward_jump_fix_generated" --address 0x006A1240 \
+            --output "$temp/analysis/lifted_6a1240_slice.cpp" --capture-return-flags
+          c++ -std=c++17 -O0 \
+            -I "$temp/generated/main96_hybrid" \
+            -I "$RUNNER_TEMP/RA3-Native/runtime" \
+            -I "$GITHUB_WORKSPACE/runtime" \
+            tools/lifted_6a1240_runner.cpp "$temp/analysis/lifted_6a1240_slice.cpp" \
+            -o "$temp/analysis/lifted_6a1240_runner"
+          PYTHONPATH=tools python tools/compare_6a1240_jump_targets.py \
+            --exe "$GITHUB_WORKSPACE/inputs/Battle_Realms_F.exe" \
+            --lifted-runner "$temp/analysis/lifted_6a1240_runner" \
+            --lifted-source "$temp/analysis/lifted_6a1240_slice.cpp" \
+            --output "$temp/analysis/6a1240-jump-differential.json"
+          python tools/create_dispatch_trace_overlay.py \
+            --input-dir "$temp/generated/main96_hybrid" \
+            --output-dir "$temp/generated/dispatch_trace_overlay" \
+            --manifest "$temp/analysis/dispatch_trace_sites.json" \
+            --replacement-source "$temp/analysis/backward_jump_fix_generated/lifted_0.cpp" \
+            --parent 0x006A1240 --target 0x006A13A0
+          python3 - "$temp/analysis/dispatch_trace_sites.json" "$temp/analysis/backward_jump_fix_manifest.json" \
+            "$temp/analysis/backward_jump_fix_generated/lifted_0.cpp" "$RUNNER_TEMP/RA3-Native/tools/lift.cpp" \
+            "$RUNNER_TEMP/lift_pe_backward" "$GITHUB_WORKSPACE/inputs/Battle_Realms_F.exe" \
+            "$GITHUB_WORKSPACE/tools/patch_ra3_backward_jump_tables.py" <<'PY'
+          import hashlib
+          import json
+          import sys
+          from pathlib import Path
+          trace, output, lifted, lifter_source, lifter, exe, patcher = map(Path, sys.argv[1:])
+          sites = json.loads(trace.read_text())['sites']
+          routes = {row['guest_ip'].lower(): row['route'] for row in sites}
+          assert routes.get('0x006a1275') == 'local-block'
+          assert routes.get('0x006a1294') == 'local-block', routes
+          def digest(path): return hashlib.sha256(path.read_bytes()).hexdigest()
+          data = {
+              'schema': 1,
+              'exe_sha256': digest(exe),
+              'ra3_commit': 'b46328a6ec6f52ce20db61a73e9f7aab3c5b3b90',
+              'patched_lift_source_sha256': digest(lifter_source),
+              'patched_lifter_sha256': digest(lifter),
+              'patch_tool_sha256': digest(patcher),
+              'targeted_root': '0x006A1240',
+              'lifted_function_sha256': digest(lifted),
+              'jump_sites': routes,
+              'whole_executable_relift': False,
+          }
+          output.write_text(json.dumps(data, indent=2) + '\n')
+          print(json.dumps(data, indent=2))
+          PY
+          diagnostic_source=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source"])' \
+            "$temp/analysis/dispatch_trace_sites.json")
+          diagnostic_original="$temp/generated/main96_hybrid/$diagnostic_source"
+          diagnostic_overlay="$temp/generated/dispatch_trace_overlay/$diagnostic_source"
+          python tools/recompile_scripts_rebased.py \
+            --scripts-dir "$GITHUB_WORKSPACE/inputs/Scripts" \
+            --analyze "$RUNNER_TEMP/analyze" --lift "$RUNNER_TEMP/lift_pe" \
+            --workspace "$temp" --units 8 --output-name rebased_batch96 \
+            --main-dir "$temp/generated/main96_hybrid" \
+            --additional-main-dir "$temp/generated/runtime_roots"
+          python3 - "$temp/work/function_catalog.json" \
+            "$temp/generated/runtime_roots/lifted_decl.h" \
+            "$temp/generated/combined_rebased/lifted_table.cpp" \
+            "$temp/generated/combined_rebased/manifest.json" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+          catalog = json.loads(Path(sys.argv[1]).read_text())
+          starts = {row["va"].lower() for row in catalog["function_starts"]}
+          expected_roots = ["0x006a12dc", "0x006a13ac"]
+          assert not any(root in starts for root in expected_roots), "incremental roots leaked into bulk lift input"
+          declarations = Path(sys.argv[2]).read_text()
+          assert all(re.search(rf"\bf_{root[2:]}\s*\(", declarations) for root in expected_roots), \
+              "runtime-observed root was not generated as an incremental lifted function"
+          table = Path(sys.argv[3]).read_text().lower()
+          assert all(f"{root}u, f_{root[2:]}" in table for root in expected_roots), \
+              "runtime-observed root missing from final dispatch table"
+          assert "0x006a13a0u, f_006a13a0" not in table, \
+              "interior jump target must remain dispatched through its owning function"
+          manifest = json.loads(Path(sys.argv[4]).read_text())
+          assert manifest["entry_count"] == 97604, f"unexpected lifted-entry count: {manifest['entry_count']}"
+          PY
+          python tools/write_lift_object_inventory.py \
+            write \
+            --generated-root "$temp/generated" \
+            --main-dir "$temp/generated/main96_hybrid" \
+            --scripts-dir "$temp/generated/scripts/rebased_batch96" \
+            --runtime-dir "$temp/generated/runtime_roots" \
+            --overlay-dir "$temp/generated/dispatch_trace_overlay" \
+            --dispatch-manifest "$temp/analysis/dispatch_trace_sites.json" \
+            --runtime-manifest "$temp/generated/runtime_roots/incremental_manifest.json" \
+            --output "$temp/analysis/lift_object_inventory.json"
+          echo "Generated lift inventory: $temp/analysis/lift_object_inventory.json"
+
+      - name: Compile and verify ARM64 lifted objects
+        shell: bash
+        run: |
+          set -euo pipefail
+          exec > "$RUNNER_TEMP/private-compile.log" 2>&1
+          temp="$RUNNER_TEMP/br-build"
+          diagnostic_source=$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["source"])' \
+            "$temp/analysis/dispatch_trace_sites.json")
+          diagnostic_original="$temp/generated/main96_hybrid/$diagnostic_source"
+          diagnostic_overlay="$temp/generated/dispatch_trace_overlay/$diagnostic_source"
+          ndk="$ANDROID_HOME/ndk/28.2.13676358"
+          common=(-G Ninja "-DCMAKE_TOOLCHAIN_FILE=$ndk/build/cmake/android.toolchain.cmake" \
+            -DANDROID_ABI=arm64-v8a -DANDROID_PLATFORM=android-29 \
+            -DCMAKE_BUILD_TYPE=Release -DRA3_RUNTIME_DIR="$RUNNER_TEMP/RA3-Native/runtime")
+          cmake -S tools/lifted -B build/arm64_hybrid96 "${common[@]}" \
+            "-DBR_LIFTED_EXCLUDE_SOURCES=$diagnostic_original" \
+            "-DBR_LIFTED_EXTRA_SOURCES=$diagnostic_overlay" \
+            "-DLIFTED_DIR=$temp/generated/main96_hybrid"
+          cmake --build build/arm64_hybrid96 --parallel 2
+          cmake -S tools/lifted -B build/arm64_rebased_scripts "${common[@]}" \
+            "-DLIFTED_DIRS=$temp/generated/scripts/rebased_batch96;$temp/generated/runtime_roots" \
+            "-DBR_COMBINED_TABLE=$temp/generated/combined_rebased/lifted_table.cpp" \
+            "-DBR_GENERATED_ROOT=$temp/generated"
+          cmake --build build/arm64_rebased_scripts --parallel 2
+          table_obj=$(find build/arm64_rebased_scripts/CMakeFiles/battle_realms_lifted.dir \
+            -name lifted_table.cpp.o -print -quit)
+          [[ -n "$table_obj" ]]
+          cp "$table_obj" build/arm64_rebased_scripts/lifted_table_combined.o
+          python tools/write_lift_object_inventory.py verify \
+            --inventory "$temp/analysis/lift_object_inventory.json" \
+            --main-objects build/arm64_hybrid96/CMakeFiles/battle_realms_lifted.dir \
+            --script-objects build/arm64_rebased_scripts/CMakeFiles/battle_realms_lifted.dir \
+            --table-object build/arm64_rebased_scripts/lifted_table_combined.o
+          mkdir -p build
+          cp "$temp/analysis/lift_object_inventory.json" build/lift_object_inventory.json
+
+      - name: Build and verify ARM64 APK
+        working-directory: android
+        run: |
+          set -euo pipefail
+          exec > "$RUNNER_TEMP/private-gradle-build.log" 2>&1
+          temp="$RUNNER_TEMP/br-build"
+          gradle assembleDebug --no-daemon --stacktrace -Pd3d7TextureDiagnostics=true
+          apk=app/build/outputs/apk/debug/app-debug.apk
+          test -s "$apk"
+          "$ANDROID_HOME/build-tools/36.1.0/aapt" dump badging "$apk" | grep -F "package: name='org.battlerealms.nativeport'"
+          unzip -l "$apk" | grep -E 'lib/arm64-v8a/libbrnative\.so$'
+          mkdir -p "$RUNNER_TEMP/br-private-report"
+          cp "$apk" "$RUNNER_TEMP/br-private-report/BattleRealmsRecomp-arm64-debug.apk"
+          {
+            echo "source_repository=$GITHUB_REPOSITORY"
+            echo "source_ref=$GITHUB_REF_NAME"
+            echo "source_commit=$(git -C "$GITHUB_WORKSPACE" rev-parse HEAD)"
+            echo "executable_sha256=$(sha256sum "$GITHUB_WORKSPACE/inputs/Battle_Realms_F.exe" | cut -d' ' -f1)"
+            echo "apk_sha256=$(sha256sum "$RUNNER_TEMP/br-private-report/BattleRealmsRecomp-arm64-debug.apk" | cut -d' ' -f1)"
+            echo "abi=arm64-v8a"
+            echo "d3d7_texture_diagnostics=enabled"
+            echo "dispatch_trace_parent=0x006A1240"
+            echo "dispatch_trace_target=0x006A13A0"
+          } > "$RUNNER_TEMP/br-private-report/build-metadata.txt"
+          test -s "$temp/analysis/dispatch_trace_sites.json"
+          test -s "$temp/analysis/lift_object_inventory.json"
+          cp "$temp/analysis/dispatch_trace_sites.json" \
+            "$RUNNER_TEMP/br-private-report/dispatch-trace-sites.json"
+          cp "$temp/analysis/6a1240-jump-differential.json" \
+            "$RUNNER_TEMP/br-private-report/6a1240-jump-differential.json"
+          cp "$temp/analysis/backward_jump_fix_manifest.json" \
+            "$RUNNER_TEMP/br-private-report/backward-jump-fix-manifest.json"
+          cp "$temp/analysis/lift_object_inventory.json" \
+            "$RUNNER_TEMP/br-private-report/lift-object-inventory.json"
+
+      - name: Store APK and diagnostics in the private repository
+        if: success()
+        env:
+          BR_PRIVATE_OUTPUTS_DEPLOY_KEY: ${{ secrets.BR_PRIVATE_OUTPUTS_DEPLOY_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/br-private-report"
+          keyfile="$RUNNER_TEMP/private-output-key"
+          printf '%s\n' "$BR_PRIVATE_OUTPUTS_DEPLOY_KEY" > "$keyfile"
+          chmod 600 "$keyfile"
+          known_hosts="$RUNNER_TEMP/github_known_hosts"
+          gh api meta --jq '.ssh_keys[] | "github.com " + .' > "$known_hosts"
+          chmod 600 "$known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $keyfile -o IdentitiesOnly=yes -o UserKnownHostsFile=$known_hosts -o StrictHostKeyChecking=yes"
+          out="$RUNNER_TEMP/private-apk-snapshot"
+          mkdir -p "$out"
+          git -C "$out" init -q --initial-branch=artifact-snapshot
+          git -C "$out" remote add origin git@github.com:shietgrupe-cpu13/BattleRealmsRecomp-Private-Build.git
+          cp "$report/build-metadata.txt" "$report/dispatch-trace-sites.json" \
+            "$report/6a1240-jump-differential.json" "$report/backward-jump-fix-manifest.json" \
+            "$report/lift-object-inventory.json" "$out/"
+          split -b 45m -d -a 3 "$report/BattleRealmsRecomp-arm64-debug.apk" \
+            "$out/BattleRealmsRecomp-arm64-debug.apk.part"
+          sha256sum "$report/BattleRealmsRecomp-arm64-debug.apk" > "$out/apk.sha256"
+          cat > "$out/DOWNLOAD.txt" <<'EOF'
+          This APK snapshot is stored in the private repository branch ci-artifacts/latest-apk.
+          Download all files named BattleRealmsRecomp-arm64-debug.apk.partNNN in lexical order,
+          concatenate them without separators, then verify apk.sha256 before installing.
+          EOF
+          git -C "$out" config user.name 'github-actions[bot]'
+          git -C "$out" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "$out" add .
+          git -C "$out" commit -m "Store private Android build $GITHUB_RUN_NUMBER"
+          current=$(git ls-remote origin refs/heads/ci-artifacts/latest-apk | cut -f1)
+          if [[ -n "$current" ]]; then
+            git -C "$out" push --force-with-lease="refs/heads/ci-artifacts/latest-apk:$current" origin \
+              HEAD:refs/heads/ci-artifacts/latest-apk
+          else
+            git -C "$out" push origin HEAD:refs/heads/ci-artifacts/latest-apk
+          fi
+          echo 'APK and build diagnostics stored on the private artifact branch.' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Summarize verified build outcome
+        if: always()
+        run: |
+          {
+            echo "## BattleRealmsRecomp private cloud build"
+            echo
+            echo "Source ref: \`$GITHUB_REF_NAME\`"
+            echo "The job fails unless lifting, ARM64 object counts, Gradle packaging, APK package identity, and ARM64 library presence all pass."
+            echo "A successful APK build does not establish Android runtime or gameplay success."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Store restricted failure diagnostics privately
+        if: failure() && github.event_name == 'workflow_dispatch'
+        env:
+          BR_PRIVATE_OUTPUTS_DEPLOY_KEY: ${{ secrets.BR_PRIVATE_OUTPUTS_DEPLOY_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          report="$RUNNER_TEMP/private-failure"
+          mkdir -p "$report"
+          for name in private-host-tests.log private-lift.log private-compile.log private-gradle-build.log; do
+            if [[ -s "$RUNNER_TEMP/$name" ]]; then cp "$RUNNER_TEMP/$name" "$report/$name"; fi
+          done
+          printf 'Public source: %s@%s\nRun: %s\n' "$GITHUB_REPOSITORY" "$GITHUB_SHA" "$GITHUB_RUN_ID" \
+            > "$report/build-failure.txt"
+          keyfile="$RUNNER_TEMP/private-output-key"
+          printf '%s\n' "$BR_PRIVATE_OUTPUTS_DEPLOY_KEY" > "$keyfile"
+          chmod 600 "$keyfile"
+          known_hosts="$RUNNER_TEMP/github_known_hosts"
+          gh api meta --jq '.ssh_keys[] | "github.com " + .' > "$known_hosts"
+          chmod 600 "$known_hosts"
+          export GIT_SSH_COMMAND="ssh -i $keyfile -o IdentitiesOnly=yes -o UserKnownHostsFile=$known_hosts -o StrictHostKeyChecking=yes"
+          out="$RUNNER_TEMP/private-failure-snapshot"
+          mkdir -p "$out"
+          git -C "$out" init -q --initial-branch=failure-snapshot
+          git -C "$out" remote add origin git@github.com:shietgrupe-cpu13/BattleRealmsRecomp-Private-Build.git
+          cp "$report"/* "$out/"
+          git -C "$out" config user.name 'github-actions[bot]'
+          git -C "$out" config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git -C "$out" add .
+          git -C "$out" commit -m "Store private diagnostics for public build $GITHUB_RUN_NUMBER"
+          git -C "$out" push origin "HEAD:refs/heads/ci-diagnostics/run-$GITHUB_RUN_ID"
+          echo "Game build failed; restricted logs were saved privately for run $GITHUB_RUN_ID." >> "$GITHUB_STEP_SUMMARY"
