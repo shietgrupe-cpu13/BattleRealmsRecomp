@@ -144,14 +144,16 @@ jobs:
           sdkmanager 'platform-tools' 'platforms;android-34' 'build-tools;36.1.0' 'cmake;3.22.1' 'ndk;28.2.13676358'
 
       - name: Restore safe public compiler cache
+        id: restore-public-ccache
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/br-public-ccache
-          key: br-public-ccache-v1-${{ runner.os }}-ndk28.2.13676358-ra3-b46328a6-cap04fd70b5-${{ hashFiles('runtime/**', 'tools/lifted/CMakeLists.txt', 'tests/fixtures/public_lift_fixture.c') }}
+          key: br-public-ccache-v2-${{ runner.os }}-ndk28.2.13676358-ra3-b46328a6-cap04fd70b5-${{ hashFiles('runtime/**', 'tools/lifted/CMakeLists.txt', 'tests/fixtures/public_lift_fixture.c', 'tests/public_lift_pipeline_smoke.py') }}
           restore-keys: |
-            br-public-ccache-v1-${{ runner.os }}-ndk28.2.13676358-ra3-b46328a6-cap04fd70b5-
+            br-public-ccache-v2-${{ runner.os }}-ndk28.2.13676358-ra3-b46328a6-cap04fd70b5-
 
       - name: Restore content-addressed synthetic lift cache
+        id: restore-public-lift
         uses: actions/cache/restore@v4
         with:
           path: ${{ runner.temp }}/br-public/generated
@@ -194,10 +196,11 @@ jobs:
           set -euo pipefail
           export CCACHE_DIR="$RUNNER_TEMP/br-public-ccache"
           export CCACHE_BASEDIR="$GITHUB_WORKSPACE:$RUNNER_TEMP"
-          python tests/public_lift_pipeline_smoke.py \
-            --analyze "$RUNNER_TEMP/analyze" \
-            --lift "$RUNNER_TEMP/lift_pe" \
-            --workspace "$RUNNER_TEMP/br-public"
+          args=(--analyze "$RUNNER_TEMP/analyze" --lift "$RUNNER_TEMP/lift_pe" --workspace "$RUNNER_TEMP/br-public")
+          if [[ "${{ steps.restore-public-lift.outputs.cache-hit }}" == "true" ]]; then
+            args+=(--expect-cache-hit)
+          fi
+          python tests/public_lift_pipeline_smoke.py "${args[@]}"
           echo "BR_PUBLIC_GENERATED=$RUNNER_TEMP/br-public/generated/main4_export_seeded" >> "$GITHUB_ENV"
 
       - name: Configure Android SDK and NDK toolchain
@@ -252,14 +255,14 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Save safe public compiler cache
-        if: success()
+        if: success() && steps.restore-public-ccache.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/br-public-ccache
-          key: br-public-ccache-v1-${{ runner.os }}-ndk28.2.13676358-ra3-b46328a6-cap04fd70b5-${{ hashFiles('runtime/**', 'tools/lifted/CMakeLists.txt', 'tests/fixtures/public_lift_fixture.c') }}
+          key: br-public-ccache-v2-${{ runner.os }}-ndk28.2.13676358-ra3-b46328a6-cap04fd70b5-${{ hashFiles('runtime/**', 'tools/lifted/CMakeLists.txt', 'tests/fixtures/public_lift_fixture.c', 'tests/public_lift_pipeline_smoke.py') }}
 
       - name: Save synthetic generated-source cache
-        if: success()
+        if: success() && steps.restore-public-lift.outputs.cache-hit != 'true'
         uses: actions/cache/save@v4
         with:
           path: ${{ runner.temp }}/br-public/generated

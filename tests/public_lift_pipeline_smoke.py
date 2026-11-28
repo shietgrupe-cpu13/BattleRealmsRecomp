@@ -67,6 +67,7 @@ def main() -> int:
     parser.add_argument("--analyze", type=Path, required=True)
     parser.add_argument("--lift", type=Path, required=True)
     parser.add_argument("--workspace", type=Path, required=True)
+    parser.add_argument("--expect-cache-hit", action="store_true")
     args = parser.parse_args()
     root = Path(__file__).resolve().parents[1]
     workspace = args.workspace.resolve()
@@ -79,8 +80,8 @@ def main() -> int:
 
     run(
         [
-            "clang", "--target=i686-pc-windows-msvc", "-O1", "-ffreestanding",
-            "-fno-stack-protector", "-c", str(fixture_src), "-o", str(obj),
+            "clang-cl", "--target=i686-pc-windows-msvc", "/Brepro", "/O1", "/GS-", "/nologo",
+            "/c", str(fixture_src), f"/Fo{obj}",
         ],
         cwd=root,
         log=compile_log,
@@ -88,13 +89,27 @@ def main() -> int:
     run(
         [
             "lld-link", "/nologo", "/machine:x86", "/subsystem:console",
-            "/nodefaultlib", "/entry:fixture_entry", f"/out:{exe}", str(obj),
+            "/nodefaultlib", "/Brepro", "/entry:fixture_entry", f"/out:{exe}", str(obj),
         ],
         cwd=root,
         log=link_log,
     )
     if not exe.is_file():
         raise RuntimeError("lld-link completed without producing the synthetic PE32")
+    first_fixture_hash = sha256(exe)
+    # Repeating identical deterministic tool invocations must yield the same PE.
+    run(
+        ["clang-cl", "--target=i686-pc-windows-msvc", "/Brepro", "/O1", "/GS-", "/nologo",
+         "/c", str(fixture_src), f"/Fo{obj}"],
+        cwd=root, log=workspace / "analysis" / "fixture_compile_repeat.log",
+    )
+    run(
+        ["lld-link", "/nologo", "/machine:x86", "/subsystem:console", "/nodefaultlib",
+         "/Brepro", "/entry:fixture_entry", f"/out:{exe}", str(obj)],
+        cwd=root, log=workspace / "analysis" / "fixture_link_repeat.log",
+    )
+    if sha256(exe) != first_fixture_hash:
+        raise RuntimeError("synthetic PE32 fixture is not byte-reproducible across identical tool invocations")
 
     try:
         import pefile
@@ -113,6 +128,8 @@ def main() -> int:
     first_status = first.get("generation", {}).get("generation_cache")
     if first_status not in {"miss", "hit"}:
         raise RuntimeError(f"unexpected initial generation-cache status: {first_status!r}")
+    if args.expect_cache_hit and first_status != "hit":
+        raise RuntimeError("Actions restored the exact generated-source cache, but recompile.py rejected it")
     if not generated.is_dir() or not list(generated.glob("lifted_*.cpp")):
         raise RuntimeError("lifter produced no generated translation units")
     catalog_path = workspace / "work" / "function_catalog.json"
@@ -153,13 +170,13 @@ def main() -> int:
     variant_obj = variant_workspace / "public_lift_fixture_variant.obj"
     variant_exe = variant_workspace / "public_lift_fixture_variant.exe"
     run(
-        ["clang", "--target=i686-pc-windows-msvc", "-O1", "-ffreestanding",
-         "-fno-stack-protector", "-c", str(variant_src), "-o", str(variant_obj)],
+        ["clang-cl", "--target=i686-pc-windows-msvc", "/Brepro", "/O1", "/GS-", "/nologo",
+         "/c", str(variant_src), f"/Fo{variant_obj}"],
         cwd=root, log=variant_workspace / "analysis" / "fixture_compile.log",
     )
     run(
         ["lld-link", "/nologo", "/machine:x86", "/subsystem:console", "/nodefaultlib",
-         "/entry:fixture_entry", f"/out:{variant_exe}", str(variant_obj)],
+         "/Brepro", "/entry:fixture_entry", f"/out:{variant_exe}", str(variant_obj)],
         cwd=root, log=variant_workspace / "analysis" / "fixture_link.log",
     )
     invalidated = invoke_recompile(root, variant_exe, variant_workspace, args.analyze.resolve(), args.lift.resolve())
@@ -171,6 +188,7 @@ def main() -> int:
     report = {
         "scope": "synthetic PE32 fixture only; no Battle Realms inputs",
         "fixture_sha256": sha256(exe),
+        "fixture_reproducible": True,
         "entrypoint_rva": f"0x{pe.OPTIONAL_HEADER.AddressOfEntryPoint:08x}",
         "function_starts": catalog["union_function_starts"],
         "generated_translation_units": len(outputs_after),
