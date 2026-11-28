@@ -1,6 +1,6 @@
 ﻿# AI handoff — BattleRealmsRecomp recovery
 
-Updated 2026-11-28 (Asia/Shanghai). Current checkout: `diag/android-terrain-texture-evidence`; the separate `perf/incremental-lifting` worktree remains preserved.
+Updated 2026-11-28 (Asia/Shanghai). Current feature worktree: `fix/terrain-blend-state-trace` (based on the diagnostic branch); the separate `perf/incremental-lifting` worktree remains preserved.
 
 ## 2026-11-28 — Renderer profiling overhead and GLES batch preparation
 
@@ -8,7 +8,8 @@ Updated 2026-11-28 (Asia/Shanghai). Current checkout: `diag/android-terrain-text
 - Found avoidable diagnostic CPU work: `probeTextureUv` scanned every texel in each draw's UV bounding rectangle (up to 65,536 for a 256x256 region) before the logger deduplicated the draw key. The scan now occurs only for a new bounded draw sample and samples at most 64x64 (4,096) points. Output records sampled black/alpha-zero ratios and post-transform diffuse-color summaries so the next real capture distinguishes texture content from vertex color.
 - GLES batch equivalence now compares the render/stage states consumed by the backend, instead of all 256 render-state and 8x32 texture-stage slots. It also caches fragment programs by shader-source inputs, avoiding construction of a long GLSL string on every draw when the shader is unchanged. Surface, target, viewport, active texture, depth, blend, cull, fog, alpha, stage operation, coordinate and sampler dependencies remain in the relevant comparison/key.
 - Added regression checks for ignored versus GPU-visible state, shader-key invalidation versus uniform/sampler-only changes, bounded UV sampling, and alpha-zero detection. `bash tests/run_renderer_component_tests.sh` passed all five component groups; Android NDK 28.2 ARM64 `clang++ -fsyntax-only -Wall -Wextra -Wformat=2` passed the diagnostic-enabled GLES backend; `git diff --check` passed.
-- These are source-level performance reductions, not a measured FPS gain: no APK was rebuilt or installed, and no comparable device run has measured the new code. No terrain rendering correction is claimed. Next: commit the focused change, run public source/component CI, then use the authorized public-runner/private-input APK path once to measure FPS and collect the added terrain color/state evidence.
+- Source commit `658e4e2249383c808bbd6b8399fee46dd66c51ea` passed public GitHub Actions run [46144218543](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46144218543): source/renderer checks passed in 14 seconds and the synthetic ARM64 pipeline passed in 1m35s. This run used no game inputs and produced no BattleRealms APK.
+- These are source-level performance reductions, not a measured FPS gain: no APK was rebuilt or installed, and no comparable device run has measured the new code. No terrain rendering correction is claimed. Next: open/merge the focused PR into the allowed `diag/android-terrain-texture-evidence` build ref, then run one consolidated protected-input APK build to measure FPS and collect the added terrain color/state evidence.
 
 ## Latest public CI continuation — cache-visible successful run
 
