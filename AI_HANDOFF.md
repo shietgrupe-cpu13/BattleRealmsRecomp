@@ -10,6 +10,7 @@ Updated 2026-11-28 (Asia/Shanghai). Current checkout: `diag/android-terrain-text
 - Added a per-EGL-context GLES state cache for framebuffer, viewport, program, texture/sampler bindings, depth/blend/cull state, VAO, buffer and stable uniforms. Upload, context-rebind and GPU-readback paths invalidate affected cache state. `PERFORMANCE_WINDOW` now reports `d3d_gl_state_calls_skipped` so a device run can measure whether this removes meaningful submission overhead.
 - `bash tests/run_renderer_component_tests.sh` passed: state-cache invalidation, vertex batching, texture source/conversion plus UV-region probe, and MS-ADPCM. Android NDK 28.2 `clang++ -fsyntax-only` passed for GLES backend both with and without texture diagnostics; `brnative.cpp` passed Android syntax-only, and `win32_startup.cpp` passed host syntax-only.
 - No FPS improvement, terrain correction, APK build or new device run is claimed. Next: compare state-call skips and frame timings on the same device scene; use the UV-range/sample counts while the user’s black terrain is visible; then fix only the first proved mismatch.
+- CI verification: commit `e8fe246` was pushed on `diag/android-terrain-texture-evidence`; GitHub Actions run [46121999357](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46121999357) completed successfully. Gitleaks, repository boundary checks, Python/tool checks, dispatch tests, and renderer component tests passed. This workflow did not build an APK or run on Android.
 
 ## Current checkpoint — 0x006A13A0 dispatch-site diagnostics
 
