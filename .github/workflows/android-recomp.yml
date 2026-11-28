@@ -54,11 +54,13 @@ jobs:
 
           tracked = [x for x in subprocess.check_output(["git", "ls-files", "-z"]).decode().split("\0") if x]
           forbidden_exts = {".exe", ".dll", ".h2o", ".bre", ".dat", ".wav", ".mp3", ".dds", ".tga", ".bmp", ".sav", ".apk", ".aab", ".o", ".so"}
-          forbidden_dirs = {"generated", "game", "gamefiles", "game_data", "original_assets", "references", "deps", "build", ".cxx"}
+          forbidden_dirs = {"generated", "game", "gamefiles", "game_data", "original_assets", "references", "deps", "build", ".cxx", "lifted"}
+          allowed_build_metadata = {"tools/lifted/CMakeLists.txt"}
           bad = []
           for name in tracked:
               path = PurePosixPath(name)
-              if path.suffix.lower() in forbidden_exts or any(part.lower() in forbidden_dirs | {"lifted"} for part in path.parts):
+              restricted_path = any(part.lower() in forbidden_dirs for part in path.parts)
+              if path.suffix.lower() in forbidden_exts or (restricted_path and name not in allowed_build_metadata):
                   bad.append(name)
           if bad:
               print("::error::Restricted inputs, generated game code, or build outputs are tracked:")
