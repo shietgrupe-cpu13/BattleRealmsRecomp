@@ -15,6 +15,15 @@ struct GuestDispatchTraceContext {
 	const char* route = nullptr;
 };
 
+constexpr uint64_t kGuestDispatchTraceInitialSamples = 8u;
+constexpr uint64_t kGuestDispatchTraceSummaryInterval = 16384u;
+
+constexpr bool shouldLogGuestDispatchTrace(uint64_t occurrence)
+{
+	return occurrence <= kGuestDispatchTraceInitialSamples ||
+		(occurrence % kGuestDispatchTraceSummaryInterval) == 0u;
+}
+
 GuestDispatchTraceContext enterGuestDispatchTrace(CPU* cpu, uint32_t target,
 	uint32_t parent, uint32_t instruction, const char* mechanism, const char* route);
 void leaveGuestDispatchTrace(const GuestDispatchTraceContext& previous);

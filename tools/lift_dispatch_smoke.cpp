@@ -1,4 +1,5 @@
 #include "lift_dispatch.h"
+#include "guest_dispatch_diagnostics.h"
 #include "win32_base.h"
 #include "win32_file.h"
 #include "win32_memory.h"
@@ -346,6 +347,22 @@ extern const unsigned lifted_count = 2;
 
 int main()
 {
+	if (!br::runtime::shouldLogGuestDispatchTrace(1u) ||
+		!br::runtime::shouldLogGuestDispatchTrace(8u) ||
+		br::runtime::shouldLogGuestDispatchTrace(9u) ||
+		!br::runtime::shouldLogGuestDispatchTrace(16384u) ||
+		br::runtime::shouldLogGuestDispatchTrace(16385u)) {
+		std::fprintf(stderr, "guest dispatch trace rate-limit boundaries failed\n");
+		return 88;
+	}
+	uint64_t samplesForCurrentTrace = 0u;
+	for (uint64_t occurrence = 1u; occurrence <= 84628u; ++occurrence)
+		samplesForCurrentTrace += br::runtime::shouldLogGuestDispatchTrace(occurrence) ? 1u : 0u;
+	if (samplesForCurrentTrace != 13u) {
+		std::fprintf(stderr, "guest dispatch trace sample count mismatch: %llu/13\n",
+			static_cast<unsigned long long>(samplesForCurrentTrace));
+		return 88;
+	}
 	CPU fxamCpu{};
 	fxamCpu.top = 5u;
 	fxamCpu.st[fxamCpu.top] = -1.0;

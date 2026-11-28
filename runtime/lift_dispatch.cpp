@@ -27,6 +27,14 @@ std::atomic<GuestImportLookup> gImportLookup{nullptr};
 std::atomic<const void*> gImportContext{nullptr};
 std::atomic<const ImportDispatchRegistry*> gHandlers{nullptr};
 thread_local GuestDispatchTraceContext gGuestDispatchTrace{};
+std::atomic<uint64_t> gGuestDispatchTraceDispatchCount{0u};
+std::atomic<uint64_t> gGuestDispatchTraceLocalCount{0u};
+
+uint64_t nextGuestDispatchTraceSample(std::atomic<uint64_t>& counter)
+{
+	const uint64_t occurrence = counter.fetch_add(1u, std::memory_order_relaxed) + 1u;
+	return br::runtime::shouldLogGuestDispatchTrace(occurrence) ? occurrence : 0u;
+}
 
 bool traceImportedCalls()
 {
@@ -238,16 +246,19 @@ GuestDispatchTraceContext enterGuestDispatchTrace(CPU* cpu, uint32_t target,
 	const GuestDispatchTraceContext previous = gGuestDispatchTrace;
 	if (target != 0x006a13a0u) return previous;
 	gGuestDispatchTrace = {target, parent, instruction, mechanism, route};
+	const uint64_t occurrence = nextGuestDispatchTraceSample(gGuestDispatchTraceDispatchCount);
+	if (!occurrence) return previous;
 	const uint32_t esp = cpu ? cpu->r[ESP] : 0u;
 	const uint32_t ebp = cpu ? cpu->r[EBP] : 0u;
 	std::fprintf(stderr,
-		"[br-dispatch-site] target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=%s esp=0x%08x ebp=0x%08x\n",
-		target, instruction, instruction, parent, mechanism ? mechanism : "unknown",
+		"[br-dispatch-site] occurrence=%llu target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=%s esp=0x%08x ebp=0x%08x\n",
+		static_cast<unsigned long long>(occurrence), target, instruction, instruction, parent, mechanism ? mechanism : "unknown",
 		route ? route : "unknown", esp, ebp);
 #if defined(__ANDROID__)
-	br::runtime::androidDiagnosticLogPrint(ANDROID_LOG_ERROR, "BattleRealmsNative",
-		"dispatch-site target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=%s esp=0x%08x ebp=0x%08x",
-		target, instruction, instruction, parent, mechanism ? mechanism : "unknown",
+	br::runtime::androidDiagnosticLogEvent(ANDROID_LOG_INFO, "BattleRealmsNative",
+		"GUEST_DISPATCH_TRACE_SAMPLE",
+		"occurrence=%llu target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=%s esp=0x%08x ebp=0x%08x",
+		static_cast<unsigned long long>(occurrence), target, instruction, instruction, parent, mechanism ? mechanism : "unknown",
 		route ? route : "unknown", esp, ebp);
 #endif
 	return previous;
@@ -267,15 +278,18 @@ void traceGuestDispatchLocal(CPU* cpu, uint32_t target, uint32_t parent,
 	uint32_t instruction, const char* mechanism)
 {
 	if (target != 0x006a13a0u) return;
+	const uint64_t occurrence = nextGuestDispatchTraceSample(gGuestDispatchTraceLocalCount);
+	if (!occurrence) return;
 	const uint32_t esp = cpu ? cpu->r[ESP] : 0u;
 	const uint32_t ebp = cpu ? cpu->r[EBP] : 0u;
 	std::fprintf(stderr,
-		"[br-dispatch-site] target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=local-block esp=0x%08x ebp=0x%08x\n",
-		target, instruction, instruction, parent, mechanism ? mechanism : "unknown", esp, ebp);
+		"[br-dispatch-site] occurrence=%llu target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=local-block esp=0x%08x ebp=0x%08x\n",
+		static_cast<unsigned long long>(occurrence), target, instruction, instruction, parent, mechanism ? mechanism : "unknown", esp, ebp);
 #if defined(__ANDROID__)
-	br::runtime::androidDiagnosticLogPrint(ANDROID_LOG_INFO, "BattleRealmsNative",
-		"dispatch-site target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=local-block esp=0x%08x ebp=0x%08x",
-		target, instruction, instruction, parent, mechanism ? mechanism : "unknown", esp, ebp);
+	br::runtime::androidDiagnosticLogEvent(ANDROID_LOG_INFO, "BattleRealmsNative",
+		"GUEST_DISPATCH_TRACE_SAMPLE",
+		"occurrence=%llu target=0x%08x caller=0x%08x guest_ip=0x%08x parent=0x%08x mechanism=%s route=local-block esp=0x%08x ebp=0x%08x",
+		static_cast<unsigned long long>(occurrence), target, instruction, instruction, parent, mechanism ? mechanism : "unknown", esp, ebp);
 #endif
 }
 
