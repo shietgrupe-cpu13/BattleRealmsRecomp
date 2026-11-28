@@ -4420,8 +4420,10 @@ void d3d7DeviceDrawIndexedPrimitive(CPU* cpu, const ApiImportStub&)
 		d3d7::GpuDrawState gpuState{};
 		gpuState.target = gpuSurfaceView(target);
 		gpuState.depth = gpuSurfaceView(depth);
+	#if defined(__ANDROID__)
 		gpuState.guestCaller = guestCaller;
 		gpuState.guestFvf = fvf;
+	#endif
 		gpuState.renderState = device.renderState;
 		gpuState.textureStageState = device.textureStageState;
 		gpuState.activeTextureStages = textureStageCount;
