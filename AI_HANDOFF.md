@@ -2,6 +2,14 @@
 
 Updated 2026-11-28 (Asia/Shanghai). Current checkout: `diag/android-terrain-texture-evidence`; the separate `perf/incremental-lifting` worktree remains preserved.
 
+## 2026-11-28 — Renderer profiling overhead and GLES batch preparation
+
+- The newest Drive session (`1B806nPQC53tqonshauJiNfO6861lmjGw`) has 708 structured records and a matching black-battlefield screenshot (`1YvDPctaJLpxI9NMHj6UIm5Saxj0NXeUD`). It reaches first frame at 1.659 s; 256 unique `D3D7_DRAW_TEXTURE_STATE` records and 142 texture uploads were captured. Performance windows range from about 12–14 FPS to 2.1–2.2 FPS; low windows charge about 433–454 ms/frame to guest CPU and 383–393 ms/frame to the GLES batch queue. The screenshot confirms terrain is still mostly black. This APK has no per-draw guest render-state or post-lighting vertex-color fields, so the black terrain root remains unproven.
+- Found avoidable diagnostic CPU work: `probeTextureUv` scanned every texel in each draw's UV bounding rectangle (up to 65,536 for a 256x256 region) before the logger deduplicated the draw key. The scan now occurs only for a new bounded draw sample and samples at most 64x64 (4,096) points. Output records sampled black/alpha-zero ratios and post-transform diffuse-color summaries so the next real capture distinguishes texture content from vertex color.
+- GLES batch equivalence now compares the render/stage states consumed by the backend, instead of all 256 render-state and 8x32 texture-stage slots. It also caches fragment programs by shader-source inputs, avoiding construction of a long GLSL string on every draw when the shader is unchanged. Surface, target, viewport, active texture, depth, blend, cull, fog, alpha, stage operation, coordinate and sampler dependencies remain in the relevant comparison/key.
+- Added regression checks for ignored versus GPU-visible state, shader-key invalidation versus uniform/sampler-only changes, bounded UV sampling, and alpha-zero detection. `bash tests/run_renderer_component_tests.sh` passed all five component groups; Android NDK 28.2 ARM64 `clang++ -fsyntax-only -Wall -Wextra -Wformat=2` passed the diagnostic-enabled GLES backend; `git diff --check` passed.
+- These are source-level performance reductions, not a measured FPS gain: no APK was rebuilt or installed, and no comparable device run has measured the new code. No terrain rendering correction is claimed. Next: commit the focused change, run public source/component CI, then use the authorized public-runner/private-input APK path once to measure FPS and collect the added terrain color/state evidence.
+
 ## Latest public CI continuation — cache-visible successful run
 
 - Added machine-readable ccache statistics to the public-safe report artifact. The workflow emits JSON counters from ccache 4.12.3 and retains the human-readable summary; the report step tolerates earlier job failures where ccache was never installed.
