@@ -562,6 +562,11 @@ uint64_t drawDiagnosticKey(const GpuDrawState& state, const TextureUvProbe& uv) 
 	add(state.guestCaller); add(state.guestFvf); add(state.target.handle);
 	add(state.activeTextureStages); add(state.viewportX); add(state.viewportY);
 	add(state.viewportWidth); add(state.viewportHeight);
+	// Keep otherwise-identical draws distinct when guest blend, alpha-test,
+	// depth, or lighting state changes. These values decide whether transparent
+	// terrain texels reveal the framebuffer or write black into it.
+	for (const uint32_t index : {7u, 14u, 15u, 19u, 20u, 22u, 23u, 24u, 25u, 27u, 137u, 140u})
+		add(state.renderState[index]);
 	add(uv.valid ? 1u : 0u);
 	if (uv.valid) {
 		const auto floatBits = [](float value) { uint32_t bits = 0u; std::memcpy(&bits, &value, sizeof(bits)); return bits; };
@@ -598,9 +603,13 @@ void logDrawTextureState(const GpuDrawState& state, uint32_t vertexCount, const 
 	const uint32_t uvBlackPermille = uv.sampledPixels
 		? uv.blackPixels * 1000u / uv.sampledPixels : 0u;
 	br::runtime::androidDiagnosticLogEvent(ANDROID_LOG_INFO,"BattleRealmsNative","D3D7_DRAW_TEXTURE_STATE",
-		"caller=%08x fvf=%08x vertices=%u target=%08x size=%ux%u stages=%u texture0=%08x/%ux%u/%ubpp/rev%u texture1=%08x/%ux%u/%ubpp/rev%u stage0=%u,%u,%u,%u,%u,%u uv=%u stage1=%u,%u,%u,%u,%u,%u uv=%u uv_range_valid=%u uv_unit=%u uv_min=%.6f,%.6f uv_max=%.6f,%.6f uv_region_pixels=%u uv_region_black=%u uv_region_black_permille=%u",
+		"caller=%08x fvf=%08x vertices=%u target=%08x size=%ux%u stages=%u texture0=%08x/%ux%u/%ubpp/rev%u texture1=%08x/%ux%u/%ubpp/rev%u rs_alpha_test=%u/%u/%u rs_alpha_blend=%u/%u/%u rs_depth=%u/%u/%u rs_cull=%u rs_lighting=%u rs_fog=%u stage0=%u,%u,%u,%u,%u,%u uv=%u stage1=%u,%u,%u,%u,%u,%u uv=%u uv_range_valid=%u uv_unit=%u uv_min=%.6f,%.6f uv_max=%.6f,%.6f uv_region_pixels=%u uv_region_black=%u uv_region_black_permille=%u",
 		state.guestCaller,state.guestFvf,vertexCount,state.target.handle,state.target.width,state.target.height,
 		state.activeTextureStages,t0,w0,h0,b0,r0,t1,w1,h1,b1,r1,
+		state.renderState[15],state.renderState[24],state.renderState[25],
+		state.renderState[27],state.renderState[19],state.renderState[20],
+		state.renderState[7],state.renderState[14],state.renderState[23],
+		state.renderState[22],state.renderState[137],state.renderState[140],
 		s0[1],s0[2],s0[3],s0[4],s0[5],s0[6],s0[11]&0xffffu,
 		s1[1],s1[2],s1[3],s1[4],s1[5],s1[6],s1[11]&0xffffu,
 		uv.valid ? 1u : 0u,uv.withinUnitRange ? 1u : 0u,
