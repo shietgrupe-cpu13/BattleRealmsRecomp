@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-28 - Public CI cache evidence
+
+- Added machine-readable ccache statistics to the public-safe pipeline artifact and ignored downloaded `artifacts/` locally so CI reports are not accidentally committed.
+- Commit `9631719` passed public Actions run [46130808048](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46130808048): 27-second source/component checks and 1m47s synthetic ARM64 pipeline.
+- The report proves generated-code cache reuse across runs and within-run, changed-input invalidation, and 18 ccache hits / 15 misses. This measures only synthetic fixture and public runtime compilation; it does not establish Battle Realms build time or gameplay.
+- Next blocker for full public-runner builds: least-privilege private game-input access and protected storage for game-derived outputs.
+
 ## 2026-11-28 — Targeted interior-dispatch trace preparation
 
 - Inspected the existing generated `f_006a1240` without relifting: `0x006A13A0` has local routes at guest jumps `0x006A1275` and `0x006A1294`; `0x006A128D` contains a fallback `ICALL` when its local case does not match. This is candidate static cause, not a captured runtime cause.

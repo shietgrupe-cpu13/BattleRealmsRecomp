@@ -2,6 +2,14 @@
 
 Updated 2026-11-28 (Asia/Shanghai). Current checkout: `diag/android-terrain-texture-evidence`; the separate `perf/incremental-lifting` worktree remains preserved.
 
+## Latest public CI continuation — cache-visible successful run
+
+- Added machine-readable ccache statistics to the public-safe report artifact. The workflow emits JSON counters from ccache 4.12.3 and retains the human-readable summary; the report step tolerates earlier job failures where ccache was never installed.
+- Commit `96317198ec23b1a61a0218b2a64f14ca5bd1d287`; Actions run [46130808048](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46130808048) succeeded. Source/runtime regressions passed; ARM64 synthetic pipeline took 1m47s.
+- Artifact: `BattleRealmsRecomp-public-safe-ci-26`; local copy is under `artifacts/public-ci-46130808048/` (ignored). It confirms cross-run generated-lift cache hit on first use, unchanged input hit, changed input miss, deterministic synthetic fixture SHA `abadce10f741bdfcd1fae3e5acd4133a0f903f72f3369d02a71dad3047e7696c`, and ccache 18 direct hits / 15 misses (~6.2 MiB).
+- Scope limit: synthetic PE32 plus generic compatibility runtime only. No Battle Realms executable, generated game code, full ARM64 game library, APK, device execution, or gameplay was built. The full protected build still lacks an authorized private input token and private output destination for public-runner work.
+- Next: resolve the protected-input/output route needed for actual game compilation, while retaining private CI until that route is secure. Then resume the evidence-backed `0x006A1294` control-flow regression; this public run did not touch or resolve it.
+
 ## Current rendering checkpoint — D3D7 GLES state cache and terrain UV evidence
 
 - Historical Android diagnostics (`tmp/latest_android_diagnostics_20261128_0449.txt`) contain 153 successful texture uploads and 256 distinct draw-state samples; all logged GLES texture upload errors are `0x0`. Several 256x256 RGB565 surfaces submitted by caller `0x0064ABD1` / FVF `0x1D2` contain 69.8–96.7% pure-black texels and are each used by 6-vertex draws. This confirms black pixels exist in pre-upload guest surfaces, but does not prove they cause the visible terrain patches.
