@@ -48,6 +48,12 @@ The safety job passed. The Android preflight still reported the source tree miss
 Gradle dependency caching and ccache for Capstone/RA3 public-toolchain code are configured. The first differential run had 18 misses and no hits; the repeat reported 18 hits and 18 misses. This confirms cache reuse but is not a timing benchmark, so no speedup is claimed. Generated BattleRealms translation units, object files and APKs are not cached. `sccache` is not applicable to this C++/Java project because no Rust compilation target is present.
 # Source migration checkpoint — 2026-11-27
 
+## 2026-11-28 update — dispatch build provenance
+
+- Private run [46110825730](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp-Private-Build/actions/runs/46110825730) on `codex/backward-jump-table-diagnostic` built an APK whose object inventory confirms the patched `dispatch_trace_overlay/lifted_45.cpp.o` replaced the stale bulk TU. The run's Unicorn differential passed 8/8 original-x86 comparisons, and its manifest classifies `0x006A1294` as a local block. Candidate APK SHA-256: `ee6ba90e04d2c297ea6d88baf657e78242102a78c734407fa72efeaf6be93202`.
+- Newer private run [46122150616](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp-Private-Build/actions/runs/46122150616) used older private `main` (`d5221dace72c2329972ba59d602121bb1fd614e3`) and reported guest dispatch at the same site. Neither APK has been verified on-device in this checkpoint.
+- Public run [46130808048](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46130808048) verifies only the game-free synthetic ARM64 pipeline and cache reuse; it did not build a Battle Realms APK.
+
 - The public repository now carries the BattleRealms runtime, Android launcher and
   renderer sources, recompile/rebase tools, and host smoke-test inputs. The 1.32 GB
   generated tree, 3.4 GB Android build outputs, downloaded references/toolchains,

@@ -15,7 +15,13 @@ The public repository now contains the source/runtime/tooling snapshot and a pub
 
 The public job has no authorized private game-input credential or protected output destination configured. To move the full Battle Realms lift/APK job to a public runner safely, provision least-privilege private input access and a private artifact destination; do not place game-derived code/APKs in public artifacts or caches. The existing `gh` account token must not be copied into Actions secrets. Until those are configured, the verified public job remains a game-free validation pipeline, not the primary full-game builder.
 
-## Repository safety audit
+## Private dispatch recovery candidate and newer failing build
+
+- Private run [46110825730](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp-Private-Build/actions/runs/46110825730) on `codex/backward-jump-table-diagnostic`; its manifest verifies the corrected parent replacement object and `0x006A1294: local-block`. Differential testing against the original PE passed 8/8 scenarios. APK SHA-256: `ee6ba90e04d2c297ea6d88baf657e78242102a78c734407fa72efeaf6be93202`. Device verification is pending.
+- Newer private run [46122150616](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp-Private-Build/actions/runs/46122150616) ran private `main` at `d5221dace72c2329972ba59d602121bb1fd614e3`, not the corrected feature branch. It reused the old bulk-lift cache and reported `0x006A1294: guest-dispatch`; that matches the failing Android trace. This is a workflow/revision mismatch; it does not implicate the incremental `0x006A13AC` root.
+- ADB currently reports no attached device. No on-device recovery claim is made. The tested feature-branch correction must be promoted to the default private build workflow under the existing repository authorization constraints.
+
+## Historical repository safety audit
 
 Audited the entire GitHub repository history on 2026-11-26 before changing visibility. The repository contained one initial commit with a short README only (GitHub reported size 0); it contained no source tree, game executable, DLL, H2O archive, assets, generated lifted code, credentials, tokens, or third-party code. The repository was changed from private to public after this audit. The local `E:\BattleRealmsRecomp` workspace is not a Git checkout and has not been uploaded.
 

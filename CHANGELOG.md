@@ -7,6 +7,12 @@
 - The report proves generated-code cache reuse across runs and within-run, changed-input invalidation, and 18 ccache hits / 15 misses. This measures only synthetic fixture and public runtime compilation; it does not establish Battle Realms build time or gameplay.
 - Next blocker for full public-runner builds: least-privilege private game-input access and protected storage for game-derived outputs.
 
+## 2026-11-28 - Indirect-jump correction provenance
+
+- Private run [46110825730](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp-Private-Build/actions/runs/46110825730) verified a patched `0x006A1240` replacement object in the diagnostic APK: target `0x006A13A0` from guest IP `0x006A1294` is local, and the original-x86 differential passed 8/8 cases. APK SHA-256: `ee6ba90e04d2c297ea6d88baf657e78242102a78c734407fa72efeaf6be93202`.
+- Newer run [46122150616](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp-Private-Build/actions/runs/46122150616) built from older private `main` and retained the old guest-dispatch route. The feature-branch correction was not selected by that build; the `0x006A13AC` incremental root is not supported as the cause by the manifests.
+- No device is attached, so corrected APK startup is unverified. Next: test this exact APK on-device, then route default builds through the verified correction.
+
 ## 2026-11-28 — Targeted interior-dispatch trace preparation
 
 - Inspected the existing generated `f_006a1240` without relifting: `0x006A13A0` has local routes at guest jumps `0x006A1275` and `0x006A1294`; `0x006A128D` contains a fallback `ICALL` when its local case does not match. This is candidate static cause, not a captured runtime cause.
