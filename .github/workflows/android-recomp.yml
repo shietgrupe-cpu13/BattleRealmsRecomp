@@ -237,6 +237,19 @@ jobs:
       - name: Report public cache statistics
         if: always()
         run: |
+          if [ -f "$RUNNER_TEMP/br-public/public_lift_pipeline_report.json" ] && command -v ccache >/dev/null; then
+            ccache --print-stats --format=json > "$RUNNER_TEMP/br-public/ccache_stats.json"
+            python3 - "$RUNNER_TEMP/br-public/public_lift_pipeline_report.json" "$RUNNER_TEMP/br-public/ccache_stats.json" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          report_path, stats_path = map(pathlib.Path, sys.argv[1:])
+          report = json.loads(report_path.read_text(encoding="utf-8"))
+          report["ccache_stats"] = json.loads(stats_path.read_text(encoding="utf-8"))
+          report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          fi
           {
             echo "## Public game-free ARM64 recompilation pipeline"
             echo
@@ -250,7 +263,7 @@ jobs:
             echo
             echo '### ccache statistics (public runtime and synthetic fixture only)'
             echo '```'
-            ccache -s || true
+            ccache --show-stats || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
