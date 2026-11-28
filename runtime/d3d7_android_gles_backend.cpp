@@ -1,4 +1,5 @@
 #include "d3d7_gpu_backend.h"
+#include "d3d7_batch_state.h"
 #include "d3d7_fixed_function.h"
 #include "d3d7_gl_state_cache.h"
 #if defined(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS)
@@ -71,7 +72,7 @@ struct Renderer {
 	std::unordered_map<uint32_t, Target> targets;
 	std::unordered_map<uint32_t, Texture> textures;
 	std::unordered_map<uint32_t, GLuint> samplers;
-	std::unordered_map<std::string, Program> programs;
+	std::unordered_map<GpuFragmentShaderKey, Program, GpuFragmentShaderKeyHash> programs;
 	GlStateCache stateCache{};
 	GLuint vertexBuffer = 0;
 	GLuint vertexArray = 0;
@@ -246,8 +247,11 @@ GLuint compile(GLenum kind, const std::string& source)
 }
 Program* programFor(const GpuDrawState& state)
 {
-	const std::string fs=fragmentShader(state); if(fs.empty()) return 0;
-	auto found=g.programs.find(fs); if(found!=g.programs.end()) return &found->second;
+	const GpuFragmentShaderKey key = makeGpuFragmentShaderKey(state);
+	auto found = g.programs.find(key);
+	if (found != g.programs.end()) return &found->second;
+	const std::string fs = fragmentShader(state);
+	if (fs.empty()) return 0;
 	GLuint vs=compile(GL_VERTEX_SHADER,vertexShader()), ps=compile(GL_FRAGMENT_SHADER,fs); if(!vs||!ps){if(vs)glDeleteShader(vs);if(ps)glDeleteShader(ps);return 0;}
 	GLuint p=glCreateProgram(); glAttachShader(p,vs);glAttachShader(p,ps);glLinkProgram(p);glDeleteShader(vs);glDeleteShader(ps);
 	GLint ok=0;glGetProgramiv(p,GL_LINK_STATUS,&ok);if(!ok){glDeleteProgram(p);return 0;}
@@ -258,28 +262,7 @@ Program* programFor(const GpuDrawState& state)
 	entry.alphaRef = glGetUniformLocation(p, "alphaRef");
 	for (uint32_t i = 0; i < entry.samplers.size(); ++i)
 		entry.samplers[i] = glGetUniformLocation(p, ("t" + std::to_string(i)).c_str());
-	return &g.programs.emplace(fs, entry).first->second;
-}
-
-bool sameSurface(const GpuSurface& a, const GpuSurface& b)
-{
-	return a.handle == b.handle && a.width == b.width && a.height == b.height &&
-		a.pitch == b.pitch && a.bitsPerPixel == b.bitsPerPixel &&
-		a.redMask == b.redMask && a.greenMask == b.greenMask &&
-		a.blueMask == b.blueMask && a.alphaMask == b.alphaMask &&
-		a.cpuRevision == b.cpuRevision && a.pixels == b.pixels && a.byteCount == b.byteCount;
-}
-
-bool sameBatchState(const GpuDrawState& a, const GpuDrawState& b)
-{
-	if (!sameSurface(a.target, b.target) || !sameSurface(a.depth, b.depth) ||
-		a.activeTextureStages != b.activeTextureStages ||
-		a.viewportX != b.viewportX || a.viewportY != b.viewportY ||
-		a.viewportWidth != b.viewportWidth || a.viewportHeight != b.viewportHeight ||
-		a.renderState != b.renderState || a.textureStageState != b.textureStageState) return false;
-	for (uint32_t i = 0; i < a.activeTextureStages; ++i)
-		if (!sameSurface(a.textures[i], b.textures[i])) return false;
-	return true;
+	return &g.programs.emplace(key, entry).first->second;
 }
 
 GLenum compare(uint32_t value);
@@ -565,7 +548,7 @@ uint64_t drawDiagnosticKey(const GpuDrawState& state, const TextureUvProbe& uv) 
 	// Keep otherwise-identical draws distinct when guest blend, alpha-test,
 	// depth, or lighting state changes. These values decide whether transparent
 	// terrain texels reveal the framebuffer or write black into it.
-	for (const uint32_t index : {7u, 14u, 15u, 19u, 20u, 22u, 23u, 24u, 25u, 27u, 137u, 140u})
+	for (const uint32_t index : {7u, 14u, 15u, 19u, 20u, 22u, 23u, 24u, 25u, 27u, 28u, 34u, 137u, 140u})
 		add(state.renderState[index]);
 	add(uv.valid ? 1u : 0u);
 	if (uv.valid) {
@@ -587,9 +570,10 @@ uint64_t drawDiagnosticKey(const GpuDrawState& state, const TextureUvProbe& uv) 
 void logDrawTextureState(const GpuDrawState& state, uint32_t vertexCount, const GpuVertex* vertices)
 {
 	if (g.drawDiagnosticKeys.size() >= 256u) return;
-	const TextureUvProbe uv = probeTextureUv(state, vertices, vertexCount);
+	TextureUvProbe uv = probeTextureUv(state, vertices, vertexCount, false);
 	const uint64_t key = drawDiagnosticKey(state, uv);
 	if (!g.drawDiagnosticKeys.insert(key).second) return;
+	sampleTextureUvBlackPixels(state, uv);
 	const auto textureInfo = [&state](uint32_t stage, uint32_t* handle, uint32_t* width,
 		uint32_t* height, uint32_t* bpp, uint32_t* revision) {
 		if (stage >= state.activeTextureStages) { *handle = *width = *height = *bpp = *revision = 0u; return; }
@@ -602,18 +586,43 @@ void logDrawTextureState(const GpuDrawState& state, uint32_t vertexCount, const 
 	const auto& s0=state.textureStageState[0]; const auto& s1=state.textureStageState[1];
 	const uint32_t uvBlackPermille = uv.sampledPixels
 		? uv.blackPixels * 1000u / uv.sampledPixels : 0u;
+	const uint32_t uvAlphaZeroPermille = uv.sampledPixels
+		? uv.alphaZeroPixels * 1000u / uv.sampledPixels : 0u;
+	std::array<double, 4> diffuseTotal{};
+	std::array<float, 4> diffuseMinimum{{1.f, 1.f, 1.f, 1.f}};
+	std::array<float, 4> diffuseMaximum{};
+	uint32_t diffuseBlackVertices = 0u;
+	for (uint32_t vertex = 0u; vertex < vertexCount; ++vertex) {
+		bool black = true;
+		for (uint32_t channel = 0u; channel < 4u; ++channel) {
+			const float value = vertices[vertex].diffuse[channel];
+			const float finiteValue = std::isfinite(value) ? value : 0.0f;
+			diffuseTotal[channel] += finiteValue;
+			diffuseMinimum[channel] = std::min(diffuseMinimum[channel], finiteValue);
+			diffuseMaximum[channel] = std::max(diffuseMaximum[channel], finiteValue);
+			if (channel < 3u && finiteValue > 1.0f / 255.0f) black = false;
+		}
+		if (black) ++diffuseBlackVertices;
+	}
+	const double inverseVertexCount = vertexCount ? 1.0 / vertexCount : 0.0;
+	for (double& value : diffuseTotal) value *= inverseVertexCount;
+	const uint32_t diffuseBlackPermille = vertexCount ? diffuseBlackVertices * 1000u / vertexCount : 0u;
 	br::runtime::androidDiagnosticLogEvent(ANDROID_LOG_INFO,"BattleRealmsNative","D3D7_DRAW_TEXTURE_STATE",
-		"caller=%08x fvf=%08x vertices=%u target=%08x size=%ux%u stages=%u texture0=%08x/%ux%u/%ubpp/rev%u texture1=%08x/%ux%u/%ubpp/rev%u rs_alpha_test=%u/%u/%u rs_alpha_blend=%u/%u/%u rs_depth=%u/%u/%u rs_cull=%u rs_lighting=%u rs_fog=%u stage0=%u,%u,%u,%u,%u,%u uv=%u stage1=%u,%u,%u,%u,%u,%u uv=%u uv_range_valid=%u uv_unit=%u uv_min=%.6f,%.6f uv_max=%.6f,%.6f uv_region_pixels=%u uv_region_black=%u uv_region_black_permille=%u",
+		"caller=%08x fvf=%08x vertices=%u target=%08x size=%ux%u stages=%u texture0=%08x/%ux%u/%ubpp/rev%u texture1=%08x/%ux%u/%ubpp/rev%u rs_alpha_test=%u/%u/%u rs_alpha_blend=%u/%u/%u rs_depth=%u/%u/%u rs_cull=%u rs_lighting=%u rs_fog=%u/%u color=%08x stage0=%u,%u,%u,%u,%u,%u uv=%u stage1=%u,%u,%u,%u,%u,%u uv=%u uv_range_valid=%u uv_unit=%u uv_min=%.6f,%.6f uv_max=%.6f,%.6f uv_region_sampled=%u uv_region_black=%u uv_region_black_permille=%u uv_region_alpha0_permille=%u diffuse_mean=%.4f,%.4f,%.4f diffuse_min=%.4f,%.4f,%.4f diffuse_max=%.4f,%.4f,%.4f diffuse_black_permille=%u",
 		state.guestCaller,state.guestFvf,vertexCount,state.target.handle,state.target.width,state.target.height,
 		state.activeTextureStages,t0,w0,h0,b0,r0,t1,w1,h1,b1,r1,
 		state.renderState[15],state.renderState[24],state.renderState[25],
 		state.renderState[27],state.renderState[19],state.renderState[20],
 		state.renderState[7],state.renderState[14],state.renderState[23],
-		state.renderState[22],state.renderState[137],state.renderState[140],
+		state.renderState[22],state.renderState[137],state.renderState[28],
+		state.renderState[140],state.renderState[34],
 		s0[1],s0[2],s0[3],s0[4],s0[5],s0[6],s0[11]&0xffffu,
 		s1[1],s1[2],s1[3],s1[4],s1[5],s1[6],s1[11]&0xffffu,
 		uv.valid ? 1u : 0u,uv.withinUnitRange ? 1u : 0u,
-		uv.minU,uv.minV,uv.maxU,uv.maxV,uv.sampledPixels,uv.blackPixels,uvBlackPermille);
+		uv.minU,uv.minV,uv.maxU,uv.maxV,uv.sampledPixels,uv.blackPixels,uvBlackPermille,
+		uvAlphaZeroPermille,diffuseTotal[0],diffuseTotal[1],diffuseTotal[2],
+		diffuseMinimum[0],diffuseMinimum[1],diffuseMinimum[2],
+		diffuseMaximum[0],diffuseMaximum[1],diffuseMaximum[2],diffuseBlackPermille);
 }
 #endif
 
@@ -624,7 +633,7 @@ bool renderGpuTriangles(const GpuDrawState& s,const GpuVertex* v,uint32_t count)
 	try {
 		if (!v || count < 3u || count % 3u || s.activeTextureStages > 8u ||
 			count > static_cast<uint32_t>(std::numeric_limits<GLsizei>::max())) return false;
-		if (g.batchPending && g.owner == std::this_thread::get_id() && sameBatchState(g.pendingState, s)) {
+		if (g.batchPending && g.owner == std::this_thread::get_id() && sameGpuBatchState(g.pendingState, s)) {
 			if (g.pendingVertices.size() > size_t(std::numeric_limits<GLsizei>::max()) - count) return false;
 			return appendGpuVertices(g.pendingVertices, v, count);
 		}

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-11-28 - D3D7 GLES submission and bounded terrain diagnostics
+
+- Avoided repeated whole-state comparisons and fragment-shader string generation in the GLES draw path; batch compatibility and shader caching now use the state that affects rendered output.
+- Bounded each unique UV texture diagnostic to 4,096 samples and moved pixel scanning after draw-key deduplication. Added sampled alpha and post-transform vertex diffuse summaries to help isolate the remaining black terrain.
+- Renderer component tests and Android ARM64 syntax validation passed. Public Actions run [46144218543](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46144218543) passed on commit `658e4e2`; its synthetic ARM64 pipeline is game-free and is not an APK build.
+- Device FPS delta and terrain correction remain unverified; this change has not yet been packaged.
+
 ## 2026-11-28 - Public CI cache evidence
 
 - Added machine-readable ccache statistics to the public-safe pipeline artifact and ignored downloaded `artifacts/` locally so CI reports are not accidentally committed.

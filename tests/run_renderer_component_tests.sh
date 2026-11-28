@@ -12,6 +12,10 @@ echo "D3D7 GLES state-cache invalidation regression passed."
 "$build_dir/d3d7_vertex_batch_smoke"
 echo "D3D7 vertex-batch allocation regression passed (3000 vertices, <=8 capacity growths)."
 "${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic -I"$root/runtime" \
+  "$root/tests/d3d7_batch_state_smoke.cpp" -o "$build_dir/d3d7_batch_state_smoke"
+"$build_dir/d3d7_batch_state_smoke"
+echo "D3D7 relevant-state batch-equivalence regression passed."
+"${CXX:-c++}" -std=c++17 -O2 -Wall -Wextra -Wpedantic -I"$root/runtime" \
   "$root/tests/d3d7_texture_probe_smoke.cpp" -o "$build_dir/d3d7_texture_probe_smoke"
 "$build_dir/d3d7_texture_probe_smoke"
 echo "D3D7 texture source/conversion probe regression passed."

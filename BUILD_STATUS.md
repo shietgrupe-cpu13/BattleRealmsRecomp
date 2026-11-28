@@ -2,6 +2,12 @@
 
 Updated 2026-11-27.
 
+## Superseding renderer change — 2026-11-28
+
+- Source commit `658e4e2249383c808bbd6b8399fee46dd66c51ea` passed public Actions run [46144218543](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/46144218543). Public source/renderer regressions passed; the game-free synthetic ARM64 runtime/lift pipeline passed in 1m35s.
+- The run did not fetch Battle Realms inputs, compile the full game lift, package an APK, or verify device FPS/rendering. No APK hash exists for this change yet.
+- Next: after merge to the workflow-approved diagnostic branch, run one protected-input APK build with the backward-jump correction, GLES submission/diagnostic optimizations, and bounded terrain evidence collection.
+
 ## Superseding status on `android-new`
 
 - `android-new` is based on `ci/android-static-recompilation` at `c35e552`; `main` is untouched. The public repository now includes the reviewed runtime/Android source snapshot and build metadata. The public source-safety workflow passed on `c35e552`; that is not an ARM64/APK or gameplay result.
