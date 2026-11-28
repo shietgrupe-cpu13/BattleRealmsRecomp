@@ -73,7 +73,9 @@ jobs:
         run: |
           python3 tests/dispatch_site_trace_smoke.py
           python3 tests/unicorn_differential_suite_smoke.py
-          python3 -m py_compile tools/trace_generated_dispatch_sites.py tools/compare_lifted_x86_block.py
+          python3 tests/backward_jump_table_patch_smoke.py
+          python3 tests/lifted_function_overlay_smoke.py
+          python3 -m py_compile tools/trace_generated_dispatch_sites.py tools/create_dispatch_trace_overlay.py tools/compare_lifted_x86_block.py tools/patch_ra3_backward_jump_tables.py tools/extract_lifted_functions.py tools/compare_6a1240_jump_targets.py
 
       - name: Run D3D7 renderer component regression
         run: bash tests/run_renderer_component_tests.sh

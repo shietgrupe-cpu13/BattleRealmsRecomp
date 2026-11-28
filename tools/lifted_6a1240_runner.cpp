@@ -20,11 +20,13 @@ uint8_t* const base = guestMemory.data();
 
 uint32_t g_eflags_hi = 0;
 uint32_t ra3_stub_tolower = 0;
+uint32_t g_guest_dispatch_target = 0;
 void ra3_hook_after(CPU*, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t) {}
 bool ra3_gate(CPU*, uint32_t) { return false; }
-void call_target(CPU*, uint32_t) {}
-void call_target_ic(CPU*, uint32_t, std::atomic<uint64_t>*) {}
+void call_target(CPU*, uint32_t target) { g_guest_dispatch_target = target; }
+void call_target_ic(CPU*, uint32_t target, std::atomic<uint64_t>*) { g_guest_dispatch_target = target; }
 [[noreturn]] void unsupported(CPU*, uint32_t, const char*) { std::abort(); }
+extern const LiftedEntry lifted_table[] = {{0x006a1240u, f_006a1240}};
 
 namespace {
 uint16_t read16(const std::vector<uint8_t>& file, size_t at)
@@ -75,12 +77,12 @@ bool map_pe32(const char* path)
 
 int main(int argc, char** argv)
 {
-	if (argc != 3) return 2;
+	if (argc != 3 && argc != 4) return 2;
 	const unsigned count = static_cast<unsigned>(std::strtoul(argv[2], nullptr, 0));
-	if (count < 32 || count > 64) return 2;
+	const uint32_t destination = argc == 4 ? static_cast<uint32_t>(std::strtoul(argv[3], nullptr, 0)) : 0x1100u;
+	if (count > 64 || destination < 0x1100u || destination > 0x113fu) return 2;
 	if (!map_pe32(argv[1])) return 3;
 	constexpr uint32_t source = 0x1000u;
-	constexpr uint32_t destination = 0x1100u;
 	constexpr uint32_t stack = 0x2000u;
 	constexpr uint32_t returnAddress = 0x12345678u;
 	for (unsigned i = 0; i < 64; ++i) {
@@ -107,10 +109,10 @@ int main(int argc, char** argv)
 
 	std::printf("{\"registers\":{\"eax\":%u,\"ecx\":%u,\"edx\":%u,\"ebx\":%u,\"esp\":%u,\"ebp\":%u,\"esi\":%u,\"edi\":%u},"
 		"\"flags\":{\"cf\":%u,\"pf\":%u,\"af\":%u,\"zf\":%u,\"sf\":%u,\"of\":%u,\"df\":%u},"
-		"\"eip_after_return\":%u,\"memory_writes\":[",
+		"\"eip_after_return\":%u,\"guest_dispatch_target\":%u,\"memory_writes\":[",
 		cpu.r[EAX], cpu.r[ECX], cpu.r[EDX], cpu.r[EBX], cpu.r[ESP], cpu.r[EBP], cpu.r[ESI], cpu.r[EDI],
 		cpu.t_cf, cpu.t_pf, cpu.t_af, cpu.t_zf, cpu.t_sf, cpu.t_of, cpu.df,
-		guest::load<uint32_t>(stack));
+		guest::load<uint32_t>(stack), g_guest_dispatch_target);
 	bool first = true;
 	for (uint32_t address = 0; address < guestMemory.size(); ++address) {
 		if (beforeMemory[address] == guestMemory[address]) continue;

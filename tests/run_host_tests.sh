@@ -16,6 +16,8 @@ python3 "$root/tests/dispatch_coverage_smoke.py"
 python3 "$root/tests/dispatch_site_trace_smoke.py"
 python3 "$root/tests/lift_object_inventory_smoke.py"
 python3 "$root/tests/unicorn_differential_suite_smoke.py"
+python3 "$root/tests/backward_jump_table_patch_smoke.py"
+python3 "$root/tests/lifted_function_overlay_smoke.py"
 mkdir -p "$root/analysis"
 cmake -S "$root/runtime/pe32_loader" -B "$build_dir" -G Ninja \
   -DCMAKE_BUILD_TYPE=Release -DRA3_RUNTIME_DIR="$ra3_runtime"
