@@ -1,5 +1,8 @@
 #include "d3d7_gpu_backend.h"
 #include "d3d7_fixed_function.h"
+#if defined(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS)
+#include "d3d7_texture_probe.h"
+#endif
 #include "d3d7_vertex_batch.h"
 
 #include <EGL/egl.h>
@@ -13,11 +16,15 @@
 #include <cstddef>
 #include <chrono>
 #include <cstring>
+#include <initializer_list>
 #include <limits>
 #include <string>
 #include <thread>
 #include <type_traits>
 #include <unordered_map>
+#if defined(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS)
+#include <unordered_set>
+#endif
 #include <vector>
 
 namespace br::runtime::d3d7 {
@@ -71,6 +78,10 @@ struct Renderer {
 	bool batchPending = false;
 	uint64_t batchSubmissions = 0u;
 	uint64_t batchSubmitNanoseconds = 0u;
+	#if defined(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS)
+	uint32_t textureDiagnosticEvents = 0u;
+	std::unordered_set<uint64_t> drawDiagnosticKeys;
+	#endif
 	GLuint depthReadProgram = 0, depthReadVao = 0;
 };
 Renderer g;
@@ -463,13 +474,26 @@ bool ensureTexture(const GpuSurface& s, GLuint& id)
 	if(t.width!=s.width||t.height!=s.height){glDeleteTextures(1,&t.id);glGenTextures(1,&t.id);t.width=s.width;t.height=s.height;t.revision=UINT64_MAX;}
 	if(t.revision!=s.cpuRevision){
 		g.pixelData.resize(size_t(s.width)*s.height*4u);auto& rgba=g.pixelData;const uint32_t bpp=s.bitsPerPixel/8u;
-		for(uint32_t y=0;y<s.height;++y)for(uint32_t x=0;x<s.width;++x){uint32_t p=0;std::memcpy(&p,s.pixels+size_t(y)*s.pitch+size_t(x)*bpp,bpp);auto*d=rgba.data()+(size_t(y)*s.width+x)*4u;d[0]=uint8_t(channel(p,s.redMask,0));d[1]=uint8_t(channel(p,s.greenMask,0));d[2]=uint8_t(channel(p,s.blueMask,0));d[3]=uint8_t(channel(p,s.alphaMask,255));}
+		#if defined(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS)
+		TextureContentProbe content{};
+		#endif
+		for(uint32_t y=0;y<s.height;++y)for(uint32_t x=0;x<s.width;++x){uint32_t p=0;std::memcpy(&p,s.pixels+size_t(y)*s.pitch+size_t(x)*bpp,bpp);auto*d=rgba.data()+(size_t(y)*s.width+x)*4u;d[0]=uint8_t(channel(p,s.redMask,0));d[1]=uint8_t(channel(p,s.greenMask,0));d[2]=uint8_t(channel(p,s.blueMask,0));d[3]=uint8_t(channel(p,s.alphaMask,255));
+			#if defined(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS)
+			content.add(p,bpp,d[0],d[1],d[2],d[3]);
+			#endif
+		}
 		glBindTexture(GL_TEXTURE_2D,t.id);
 		// GLES defaults the minification filter to a mipmapped mode, which makes
 		// a level-zero-only texture incomplete. Match D3D7's point-filter default.
 		glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_REPEAT);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_REPEAT);
-		glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,GLsizei(s.width),GLsizei(s.height),0,GL_RGBA,GL_UNSIGNED_BYTE,rgba.data());t.revision=s.cpuRevision;
+		glTexImage2D(GL_TEXTURE_2D,0,GL_RGBA8,GLsizei(s.width),GLsizei(s.height),0,GL_RGBA,GL_UNSIGNED_BYTE,rgba.data());
+		#if defined(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS)
+		const GLenum uploadError=glGetError();
+		if(g.textureDiagnosticEvents<512u){++g.textureDiagnosticEvents;const uint32_t opaqueBlackPermille=content.pixels?uint32_t(content.opaqueBlackPixels*1000u/content.pixels):0u;const uint32_t alphaZeroPermille=content.pixels?uint32_t(content.alphaZeroPixels*1000u/content.pixels):0u;br::runtime::androidDiagnosticLogEvent(ANDROID_LOG_INFO,"BattleRealmsNative","D3D7_TEXTURE_UPLOAD","surface=%08x size=%ux%u pitch=%u bpp=%u masks=%08x/%08x/%08x/%08x revision=%llu pixels=%llu source_fnv=%08x rgba_fnv=%08x rgb_black=%llu opaque_black_permille=%u alpha_zero_permille=%u gl_error=0x%x",s.handle,s.width,s.height,s.pitch,s.bitsPerPixel,s.redMask,s.greenMask,s.blueMask,s.alphaMask,static_cast<unsigned long long>(s.cpuRevision),static_cast<unsigned long long>(content.pixels),content.sourceFnv1a,content.rgbaFnv1a,static_cast<unsigned long long>(content.rgbBlackPixels),opaqueBlackPermille,alphaZeroPermille,uploadError);}
+		if(uploadError!=GL_NO_ERROR)return false;
+		#endif
+		t.revision=s.cpuRevision;
 	}
 	id=t.id;return glGetError()==GL_NO_ERROR;
 }
@@ -486,6 +510,53 @@ bool stageUsesTexture(const std::array<uint32_t, 32>& s)
 	};
 	return uses(s[1], s[2], s[3]) || uses(s[4], s[5], s[6]);
 }
+
+#if defined(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS)
+uint64_t drawDiagnosticKey(const GpuDrawState& state) noexcept
+{
+	uint64_t hash = 14695981039346656037ull;
+	const auto add = [&hash](uint64_t value) {
+		for (uint32_t i = 0u; i < 8u; ++i) {
+			hash = (hash ^ uint8_t(value >> (i * 8u))) * 1099511628211ull;
+		}
+	};
+	add(state.guestCaller); add(state.guestFvf); add(state.target.handle);
+	add(state.activeTextureStages); add(state.viewportX); add(state.viewportY);
+	add(state.viewportWidth); add(state.viewportHeight);
+	for (uint32_t stage = 0u; stage < state.activeTextureStages; ++stage) {
+		const GpuSurface& texture = state.textures[stage];
+		add(texture.handle); add(texture.cpuRevision); add(texture.width); add(texture.height);
+		add(texture.bitsPerPixel); add(texture.redMask); add(texture.greenMask);
+		add(texture.blueMask); add(texture.alphaMask);
+		const auto& ts = state.textureStageState[stage];
+		for (const uint32_t index : {1u, 2u, 3u, 4u, 5u, 6u, 11u, 13u, 14u, 16u, 17u, 18u}) add(ts[index]);
+	}
+	return hash;
+}
+
+void logDrawTextureState(const GpuDrawState& state, uint32_t vertexCount)
+{
+	if (g.drawDiagnosticKeys.size() >= 256u) return;
+	const uint64_t key = drawDiagnosticKey(state);
+	if (!g.drawDiagnosticKeys.insert(key).second) return;
+	const auto textureInfo = [&state](uint32_t stage, uint32_t* handle, uint32_t* width,
+		uint32_t* height, uint32_t* bpp, uint32_t* revision) {
+		if (stage >= state.activeTextureStages) { *handle = *width = *height = *bpp = *revision = 0u; return; }
+		const GpuSurface& s = state.textures[stage];
+		*handle = s.handle; *width = s.width; *height = s.height; *bpp = s.bitsPerPixel;
+		*revision = static_cast<uint32_t>(s.cpuRevision);
+	};
+	uint32_t t0=0u,w0=0u,h0=0u,b0=0u,r0=0u,t1=0u,w1=0u,h1=0u,b1=0u,r1=0u;
+	textureInfo(0u,&t0,&w0,&h0,&b0,&r0); textureInfo(1u,&t1,&w1,&h1,&b1,&r1);
+	const auto& s0=state.textureStageState[0]; const auto& s1=state.textureStageState[1];
+	br::runtime::androidDiagnosticLogEvent(ANDROID_LOG_INFO,"BattleRealmsNative","D3D7_DRAW_TEXTURE_STATE",
+		"caller=%08x fvf=%08x vertices=%u target=%08x size=%ux%u stages=%u texture0=%08x/%ux%u/%ubpp/rev%u texture1=%08x/%ux%u/%ubpp/rev%u stage0=%u,%u,%u,%u,%u,%u uv=%u stage1=%u,%u,%u,%u,%u,%u uv=%u",
+		state.guestCaller,state.guestFvf,vertexCount,state.target.handle,state.target.width,state.target.height,
+		state.activeTextureStages,t0,w0,h0,b0,r0,t1,w1,h1,b1,r1,
+		s0[1],s0[2],s0[3],s0[4],s0[5],s0[6],s0[11]&0xffffu,
+		s1[1],s1[2],s1[3],s1[4],s1[5],s1[6],s1[11]&0xffffu);
+}
+#endif
 
 } // namespace
 
@@ -517,6 +588,9 @@ bool renderGpuTriangles(const GpuDrawState& s,const GpuVertex* v,uint32_t count)
 		if (!g.vertexBuffer) glGenBuffers(1, &g.vertexBuffer);
 		if (!g.vertexArray) glGenVertexArrays(1, &g.vertexArray);
 		if (!g.vertexBuffer || !g.vertexArray || glGetError() != GL_NO_ERROR) return false;
+		#if defined(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS)
+		logDrawTextureState(s,count);
+		#endif
 		g.pendingVertices.clear();
 		if (!appendGpuVertices(g.pendingVertices, v, count)) return false;
 		g.pendingState = s;

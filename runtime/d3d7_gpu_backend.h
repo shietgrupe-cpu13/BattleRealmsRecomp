@@ -37,6 +37,8 @@ struct GpuDrawState {
 	GpuSurface target{};
 	GpuSurface depth{};
 	std::array<GpuSurface, 8> textures{};
+	uint32_t guestCaller = 0;
+	uint32_t guestFvf = 0;
 	std::array<uint32_t, 256> renderState{};
 	std::array<std::array<uint32_t, 32>, 8> textureStageState{};
 	uint32_t activeTextureStages = 0;

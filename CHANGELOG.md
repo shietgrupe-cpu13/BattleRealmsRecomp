@@ -43,3 +43,10 @@
 - Added a focused high-delta PCM regression to `tests/ms_adpcm_decoder_smoke.cpp` and ran `bash tests/run_renderer_component_tests.sh`: D3D7 batch regression and MS-ADPCM regression both passed. This checks arithmetic, not real asset/audio output.
 - Pushed as `515dfda`; GitHub Actions [45964415836](https://github.com/shietgrupe-cpu13/BattleRealmsRecomp/actions/runs/45964415836) passed source safety, Python tools compile, D3D7 batch regression and MS-ADPCM decoder regression. The workflow does not build the private game APK.
 - Next verification is Android audio playback with a new authorized build and stream-level diagnostics. No new APK or device result is claimed by this change.
+
+## 2026-11-28 — Bounded D3D7 texture diagnostics
+
+- The latest Android log shows successful GLES draws but lacks per-texture identity/content data for the user's remaining partially black terrain. Added opt-in diagnostics that record a bounded set of unique D3D7 draw states and texture uploads, including surface identity, dimensions, pixel masks, source/converted hashes, black/transparent texel counts, and GLES upload errors.
+- Diagnostics are off by default. The private diagnostic APK enables them with `-Pd3d7TextureDiagnostics=true`; normal builds do not hash pixels or emit the extra D3D events.
+- Added a focused texture-probe smoke test. `bash tests/run_renderer_component_tests.sh` passed its vertex-batch, texture-probe, and MS-ADPCM tests. Android NDK `clang++ -fsyntax-only` passed with diagnostics both disabled and enabled.
+- No terrain fix or FPS gain is claimed yet. The next evidence is a fresh Android log containing the actual texture/draw records while black patches are visible.

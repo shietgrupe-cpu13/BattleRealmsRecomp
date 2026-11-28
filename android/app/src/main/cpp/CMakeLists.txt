@@ -7,6 +7,7 @@ get_filename_component(BR_ROOT "${CMAKE_CURRENT_LIST_DIR}/../../../../.." ABSOLU
 # Configure this before the runtime subdirectory so the dispatch target can
 # exclude host API work from lifted-function residency samples.
 option(BR_ANDROID_GUEST_PROFILE "Enable sampled per-function guest profiling" OFF)
+option(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS "Record bounded D3D7 texture/draw diagnostics" OFF)
 add_subdirectory("${BR_ROOT}/runtime/pe32_loader" "${CMAKE_CURRENT_BINARY_DIR}/battle_realms_runtime")
 
 # Profiling samples scoped current guest functions from traced lifted code.
