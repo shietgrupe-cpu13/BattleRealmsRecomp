@@ -1,6 +1,15 @@
 ﻿# AI handoff — BattleRealmsRecomp recovery
 
-Updated 2026-11-28 (Asia/Shanghai). Current checkout: `perf/incremental-lifting`; preserve the existing incremental-lift work and generated output under `E:\BattleRealmsRecomp`.
+Updated 2026-11-28 (Asia/Shanghai). Current checkout: `diag/android-terrain-texture-evidence`; the separate `perf/incremental-lifting` worktree remains preserved.
+
+## Current rendering checkpoint — D3D7 GLES state cache and terrain UV evidence
+
+- Historical Android diagnostics (`tmp/latest_android_diagnostics_20261128_0449.txt`) contain 153 successful texture uploads and 256 distinct draw-state samples; all logged GLES texture upload errors are `0x0`. Several 256x256 RGB565 surfaces submitted by caller `0x0064ABD1` / FVF `0x1D2` contain 69.8–96.7% pure-black texels and are each used by 6-vertex draws. This confirms black pixels exist in pre-upload guest surfaces, but does not prove they cause the visible terrain patches.
+- A local H2O correlation checked 218 128x128 RGB terrain TGA entries in `Grasslands_Medium.H2O` from the E: reference copy. No Android upload source hash matched raw row-major data or a nearest 2x enlargement with a 5-5-5-to-5-6-5 conversion. This is a negative result limited to those transformations/archive; texture source identity and the visible black-patch root cause remain unresolved.
+- Added diagnostic-only UV bounds and sampled-bounding-region black-texel counts to the existing bounded draw-state log. The probe reports only when the UV range is finite and contained in [0,1]; it is an approximate texture bounding region, not exact per-fragment coverage. A focused fixture verifies a 3/4 black sampled region.
+- Added a per-EGL-context GLES state cache for framebuffer, viewport, program, texture/sampler bindings, depth/blend/cull state, VAO, buffer and stable uniforms. Upload, context-rebind and GPU-readback paths invalidate affected cache state. `PERFORMANCE_WINDOW` now reports `d3d_gl_state_calls_skipped` so a device run can measure whether this removes meaningful submission overhead.
+- `bash tests/run_renderer_component_tests.sh` passed: state-cache invalidation, vertex batching, texture source/conversion plus UV-region probe, and MS-ADPCM. Android NDK 28.2 `clang++ -fsyntax-only` passed for GLES backend both with and without texture diagnostics; `brnative.cpp` passed Android syntax-only, and `win32_startup.cpp` passed host syntax-only.
+- No FPS improvement, terrain correction, APK build or new device run is claimed. Next: compare state-call skips and frame timings on the same device scene; use the UV-range/sample counts while the user’s black terrain is visible; then fix only the first proved mismatch.
 
 ## Current checkpoint — 0x006A13A0 dispatch-site diagnostics
 

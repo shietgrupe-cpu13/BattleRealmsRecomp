@@ -7890,7 +7890,8 @@ Win32FrameRenderStats consumeWin32FrameRenderStats()
 		gProfileD3dGpuSubmitNs.exchange(0u, std::memory_order_relaxed),
 		gProfileD3dFallbackNs.exchange(0u, std::memory_order_relaxed),
 		gProfileD3dSyncReadbackNs.exchange(0u, std::memory_order_relaxed),
-		d3d7::consumeGpuBackendSubmitNanoseconds()};
+		d3d7::consumeGpuBackendSubmitNanoseconds(),
+		d3d7::consumeGpuBackendSkippedStateCalls()};
 #else
 	return {};
 #endif

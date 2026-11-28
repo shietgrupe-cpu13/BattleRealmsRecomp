@@ -105,6 +105,7 @@ struct AndroidFrameSample {
 	uint64_t d3dSetupNs = 0, d3dGeometryNs = 0, d3dGpuSubmitNs = 0;
 	uint64_t d3dFallbackNs = 0, d3dSyncReadbackNs = 0;
 	uint64_t gpuBackendSubmitNs = 0;
+	uint64_t gpuStateCallsSkipped = 0;
 };
 std::array<AndroidFrameSample, 512> gAndroidFrameSamples{};
 size_t gAndroidFrameSampleCount = 0;
@@ -178,6 +179,7 @@ void emitPerformanceSummary(std::chrono::steady_clock::time_point now)
 	uint64_t d3dSetupNs = 0u, d3dGeometryNs = 0u, d3dGpuSubmitNs = 0u;
 	uint64_t d3dFallbackNs = 0u, d3dSyncReadbackNs = 0u;
 	uint64_t gpuBackendSubmitNs = 0u;
+	uint64_t gpuStateCallsSkipped = 0u;
 	for (size_t i = 0; i < gAndroidFrameSampleCount; ++i) {
 		const auto& sample = gAndroidFrameSamples[i];
 		if (sample.intervalUs) intervals[intervalCount++] = sample.intervalUs;
@@ -192,6 +194,7 @@ void emitPerformanceSummary(std::chrono::steady_clock::time_point now)
 		d3dGpuSubmitNs += sample.d3dGpuSubmitNs; d3dFallbackNs += sample.d3dFallbackNs;
 		d3dSyncReadbackNs += sample.d3dSyncReadbackNs;
 		gpuBackendSubmitNs += sample.gpuBackendSubmitNs;
+		gpuStateCallsSkipped += sample.gpuStateCallsSkipped;
 	}
 	std::sort(intervals.begin(), intervals.begin() + intervalCount);
 	const auto percentile = [&](double q) -> uint64_t {
@@ -236,7 +239,7 @@ void emitPerformanceSummary(std::chrono::steady_clock::time_point now)
 		!audioCallbackActivity.completed ? "no_audio_callbacks" :
 		audioActiveCallbacks ? "callback_running_with_mixer_buffers" : "callbacks_running_no_active_buffers";
 	br::runtime::androidDiagnosticLogEvent(ANDROID_LOG_INFO, "BattleRealmsPerf", "PERFORMANCE_WINDOW",
-		"window=%.2fs frames=%llu presented_fps=%.2f frame_us_avg=%llu p95=%llu p99=%llu guest_cpu_us_per_frame=%llu d3d_draw_calls=%llu d3d_raster_ms=%.2f d3d_setup_us_per_frame=%llu d3d_vertex_geometry_us_per_frame=%llu d3d_gpu_batch_queue_us_per_frame=%llu d3d_gpu_flush_submit_cpu_us_per_frame=%llu d3d_fallback_us_per_frame=%llu d3d_sync_readback_hash_us_per_frame=%llu d3d_gpu_draw_calls=%llu d3d_gl_batches=%llu d3d_software_fallback_draw_calls=%llu d3d_gpu_triangles=%llu d3d_software_fallback_triangles=%llu ddraw_flips=%llu convert_scale_us_per_frame=%llu scale_map_us_per_frame=%llu conversion_setup_us_per_frame=%llu pixel_convert_scale_us_per_frame=%llu native_lock_us_per_frame=%llu unlock_post_us_per_frame=%llu converter_temp_alloc_bytes_per_frame=%llu audio_stream_state=%d audio_recoveries=%u audio_callback_gap_ms=%llu audio_callback_entered=%llu audio_callbacks=%llu audio_callback_inflight=%u audio_frames=%llu audio_active_callbacks=%llu audio_active_buffers_per_callback=%.2f audio_transport_status=%s audio_xrun_count=%d audio_xrun_delta=%d audio_xrun_queries=%llu audio_xrun_query_failures=%llu audio_rms=%0.1f audio_silent_permille=%llu audio_peak_abs=%u audio_clipped_samples=%llu audio_clipped_permille=%llu audio_callback_overruns=%llu audio_callback_us_avg=%llu audio_callback_us_max=%u malloc_live_kb=%llu rss_kb=%llu vmhwm_kb=%llu present_errors_total=%llu",
+		"window=%.2fs frames=%llu presented_fps=%.2f frame_us_avg=%llu p95=%llu p99=%llu guest_cpu_us_per_frame=%llu d3d_draw_calls=%llu d3d_raster_ms=%.2f d3d_setup_us_per_frame=%llu d3d_vertex_geometry_us_per_frame=%llu d3d_gpu_batch_queue_us_per_frame=%llu d3d_gpu_flush_submit_cpu_us_per_frame=%llu d3d_fallback_us_per_frame=%llu d3d_sync_readback_hash_us_per_frame=%llu d3d_gpu_draw_calls=%llu d3d_gl_batches=%llu d3d_gl_state_calls_skipped=%llu d3d_software_fallback_draw_calls=%llu d3d_gpu_triangles=%llu d3d_software_fallback_triangles=%llu ddraw_flips=%llu convert_scale_us_per_frame=%llu scale_map_us_per_frame=%llu conversion_setup_us_per_frame=%llu pixel_convert_scale_us_per_frame=%llu native_lock_us_per_frame=%llu unlock_post_us_per_frame=%llu converter_temp_alloc_bytes_per_frame=%llu audio_stream_state=%d audio_recoveries=%u audio_callback_gap_ms=%llu audio_callback_entered=%llu audio_callbacks=%llu audio_callback_inflight=%u audio_frames=%llu audio_active_callbacks=%llu audio_active_buffers_per_callback=%.2f audio_transport_status=%s audio_xrun_count=%d audio_xrun_delta=%d audio_xrun_queries=%llu audio_xrun_query_failures=%llu audio_rms=%0.1f audio_silent_permille=%llu audio_peak_abs=%u audio_clipped_samples=%llu audio_clipped_permille=%llu audio_callback_overruns=%llu audio_callback_us_avg=%llu audio_callback_us_max=%u malloc_live_kb=%llu rss_kb=%llu vmhwm_kb=%llu present_errors_total=%llu",
 		windowSeconds, static_cast<unsigned long long>(gAndroidFramesInSummary), fps,
 		static_cast<unsigned long long>(avgFrameUs), static_cast<unsigned long long>(percentile(0.95)),
 		static_cast<unsigned long long>(percentile(0.99)),
@@ -249,6 +252,7 @@ void emitPerformanceSummary(std::chrono::steady_clock::time_point now)
 		static_cast<unsigned long long>(gAndroidFramesInSummary ? d3dFallbackNs / gAndroidFramesInSummary / 1000u : 0u),
 		static_cast<unsigned long long>(gAndroidFramesInSummary ? d3dSyncReadbackNs / gAndroidFramesInSummary / 1000u : 0u),
 		static_cast<unsigned long long>(gpuDraws), static_cast<unsigned long long>(gpuBackendBatches),
+		static_cast<unsigned long long>(gpuStateCallsSkipped),
 		static_cast<unsigned long long>(softwareFallbackDraws),
 		static_cast<unsigned long long>(gpuTriangles), static_cast<unsigned long long>(softwareFallbackTriangles),
 		static_cast<unsigned long long>(flips), static_cast<unsigned long long>(gAndroidFramesInSummary ? convert / gAndroidFramesInSummary : 0u),
@@ -426,6 +430,7 @@ void presentGuestFrame(const uint8_t* pixels, uint32_t width, uint32_t height,
 	sample.d3dFallbackNs = renderStats.d3dFallbackNanoseconds;
 	sample.d3dSyncReadbackNs = renderStats.d3dSyncReadbackNanoseconds;
 	sample.gpuBackendSubmitNs = renderStats.gpuBackendSubmitNanoseconds;
+	sample.gpuStateCallsSkipped = renderStats.gpuStateCallsSkipped;
 	gAndroidFrameSamples[gAndroidFrameSampleNext] = sample;
 	gAndroidFrameSampleNext = (gAndroidFrameSampleNext + 1u) % gAndroidFrameSamples.size();
 	gAndroidFrameSampleCount = std::min(gAndroidFrameSampleCount + 1u, gAndroidFrameSamples.size());

@@ -51,3 +51,11 @@
 - Added a focused texture-probe smoke test. `bash tests/run_renderer_component_tests.sh` passed its vertex-batch, texture-probe, and MS-ADPCM tests. Android NDK `clang++ -fsyntax-only` passed with diagnostics both disabled and enabled.
 - The first private APK workflow stopped in its early host build because diagnostic caller metadata was assigned outside its Android-only declaration. Guarded those assignments with `__ANDROID__`; the host `win32_startup.cpp` syntax check now passes. No lifting, ARM64 library, or APK step ran in that failed attempt.
 - No terrain fix or FPS gain is claimed yet. The next evidence is a fresh Android log containing the actual texture/draw records while black patches are visible.
+
+## 2026-11-28 — D3D7 state caching and terrain UV diagnostics
+
+- Added a per-context GLES state cache for repeated framebuffer, viewport, program, sampler/texture, depth, blend, cull, VAO/buffer and stable uniform updates. Explicit invalidation covers texture/surface uploads, context rebinds and GPU readbacks. A focused host test covers value reuse and invalidation.
+- Added `d3d_gl_state_calls_skipped` to Android performance-window diagnostics to measure cache effectiveness on-device; no FPS gain is claimed without a comparable device run.
+- Extended the bounded D3D7 draw diagnostics with UV min/max and black texel counts inside the UV bounding region, and added a regression fixture with three black texels of four sampled.
+- Read the latest retained device log: black-heavy source surfaces have zero GLES upload errors and are submitted by the 0x0064ABD1/FVF 0x1D2 path; this does not yet identify why terrain pixels render black. Compared 218 128x128 RGB TGA entries from the E: Grasslands archive against the logged 256x256 RGB565 source hashes (raw and nearest 2x / 5551→565 candidates); no match.
+- `bash tests/run_renderer_component_tests.sh` passed all four focused components. NDK 28.2 syntax-only checks passed for the GLES backend with diagnostics off/on and for Android `brnative.cpp`; host syntax-only passed for `win32_startup.cpp`. No APK or device verification was run.

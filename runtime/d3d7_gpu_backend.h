@@ -55,6 +55,7 @@ bool renderGpuTriangles(const GpuDrawState& state, const GpuVertex* vertices,
 	uint32_t vertexCount) noexcept;
 uint64_t consumeGpuBackendBatchSubmissions() noexcept;
 uint64_t consumeGpuBackendSubmitNanoseconds() noexcept;
+uint64_t consumeGpuBackendSkippedStateCalls() noexcept;
 bool synchronizeGpuSurface(const GpuSurface& surface) noexcept;
 void markGpuSurfaceCpuWrite(uint32_t handle) noexcept;
 void invalidateGpuSurface(uint32_t handle) noexcept;

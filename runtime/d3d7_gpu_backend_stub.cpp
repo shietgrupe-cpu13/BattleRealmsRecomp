@@ -17,6 +17,11 @@ uint64_t consumeGpuBackendSubmitNanoseconds() noexcept
 	return 0u;
 }
 
+uint64_t consumeGpuBackendSkippedStateCalls() noexcept
+{
+	return 0u;
+}
+
 bool synchronizeGpuSurface(const GpuSurface&) noexcept
 {
 	return true;

@@ -1,5 +1,6 @@
 #include "d3d7_gpu_backend.h"
 #include "d3d7_fixed_function.h"
+#include "d3d7_gl_state_cache.h"
 #if defined(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS)
 #include "d3d7_texture_probe.h"
 #endif
@@ -15,6 +16,7 @@
 #include <array>
 #include <cstddef>
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <initializer_list>
 #include <limits>
@@ -56,6 +58,10 @@ struct Program {
 	GLint fogColor = -1;
 	GLint alphaRef = -1;
 	std::array<GLint, 8> samplers{};
+	CachedGlValue<std::array<uint32_t, 2>> appliedTargetSize{};
+	CachedGlValue<uint32_t> appliedFogColor{};
+	CachedGlValue<uint32_t> appliedAlphaRef{};
+	std::array<CachedGlValue<uint32_t>, 8> appliedSamplers{};
 };
 struct Renderer {
 	EGLDisplay display = EGL_NO_DISPLAY;
@@ -66,6 +72,7 @@ struct Renderer {
 	std::unordered_map<uint32_t, Texture> textures;
 	std::unordered_map<uint32_t, GLuint> samplers;
 	std::unordered_map<std::string, Program> programs;
+	GlStateCache stateCache{};
 	GLuint vertexBuffer = 0;
 	GLuint vertexArray = 0;
 	bool vertexArrayReady = false;
@@ -73,7 +80,7 @@ struct Renderer {
 	std::vector<uint16_t> depthData;
 	std::vector<GpuVertex> pendingVertices;
 	GpuDrawState pendingState{};
-	Program pendingProgram{};
+	Program* pendingProgram = nullptr;
 	std::array<GLuint, 8> pendingTextures{};
 	bool batchPending = false;
 	uint64_t batchSubmissions = 0u;
@@ -101,6 +108,7 @@ bool ensureContext()
 		if (eglGetCurrentContext() == g.context && eglGetCurrentDisplay() == g.display &&
 			eglGetCurrentSurface(EGL_DRAW) == g.surface &&
 			eglGetCurrentSurface(EGL_READ) == g.surface) return true;
+		g.stateCache.invalidateDrawState();
 		return eglMakeCurrent(g.display, g.surface, g.surface, g.context) == EGL_TRUE;
 	}
 	g.display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
@@ -156,6 +164,7 @@ bool uploadColor(Target& t, const GpuSurface& s)
 		d[0] = uint8_t(channel(p, s.redMask, 0)); d[1] = uint8_t(channel(p, s.greenMask, 0));
 		d[2] = uint8_t(channel(p, s.blueMask, 0)); d[3] = uint8_t(channel(p, s.alphaMask, 255));
 	}
+	g.stateCache.invalidateTextureBindings();
 	glBindTexture(GL_TEXTURE_2D, t.color);
 	glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
 	glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, GLsizei(s.width), GLsizei(s.height), GL_RGBA, GL_UNSIGNED_BYTE, rgba.data());
@@ -171,6 +180,7 @@ bool uploadDepth(Target& t, const GpuSurface& s)
 	g.depthData.resize(size_t(s.width) * s.height);
 	for (uint32_t y = 0; y < s.height; ++y) for (uint32_t x = 0; x < s.width; ++x)
 		std::memcpy(&g.depthData[size_t(y) * s.width + x], s.pixels + size_t(y) * s.pitch + size_t(x) * bpp, bpp);
+	g.stateCache.invalidateBindings();
 	glBindTexture(GL_TEXTURE_2D, t.depth);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
 	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
@@ -317,47 +327,71 @@ bool flushPending() noexcept
 		const GpuDrawState& s = g.pendingState;
 		auto targetIt = g.targets.find(s.target.handle);
 		if (targetIt == g.targets.end() || !targetIt->second.fbo ||
-			!g.pendingProgram.handle || g.pendingVertices.empty() || g.pendingVertices.size() % 3u) return false;
+			!g.pendingProgram || !g.pendingProgram->handle || g.pendingVertices.empty() || g.pendingVertices.size() % 3u) return false;
 		Target& target = targetIt->second;
-		glBindFramebuffer(GL_FRAMEBUFFER, target.fbo);
-		glViewport(0, 0, GLsizei(s.target.width), GLsizei(s.target.height));
-		glUseProgram(g.pendingProgram.handle);
-		if (g.pendingProgram.targetSize >= 0)
-			glUniform2f(g.pendingProgram.targetSize, float(s.target.width), float(s.target.height));
+		Program& program = *g.pendingProgram;
+		if (g.stateCache.apply(g.stateCache.framebuffer, target.fbo))
+			glBindFramebuffer(GL_FRAMEBUFFER, target.fbo);
+		const std::array<int32_t, 4> viewport = {0, 0, int32_t(s.target.width), int32_t(s.target.height)};
+		if (g.stateCache.apply(g.stateCache.viewport, viewport))
+			glViewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+		if (g.stateCache.apply(g.stateCache.program, program.handle))
+			glUseProgram(program.handle);
+		if (program.targetSize >= 0 && program.appliedTargetSize.update({s.target.width, s.target.height}))
+			glUniform2f(program.targetSize, float(s.target.width), float(s.target.height));
 		const uint32_t fog = s.renderState[34];
-		if (g.pendingProgram.fogColor >= 0)
-			glUniform4f(g.pendingProgram.fogColor, float((fog >> 16) & 255) / 255.f,
+		if (program.fogColor >= 0 && program.appliedFogColor.update(fog))
+			glUniform4f(program.fogColor, float((fog >> 16) & 255) / 255.f,
 				float((fog >> 8) & 255) / 255.f, float(fog & 255) / 255.f, float(fog >> 24) / 255.f);
-		if (g.pendingProgram.alphaRef >= 0)
-			glUniform1f(g.pendingProgram.alphaRef, float(s.renderState[24] & 255u) / 255.f);
+		const uint32_t alphaRef = s.renderState[24] & 255u;
+		if (program.alphaRef >= 0 && program.appliedAlphaRef.update(alphaRef))
+			glUniform1f(program.alphaRef, float(alphaRef) / 255.f);
 		for (uint32_t i = 0; i < s.activeTextureStages; ++i) {
 			const auto& stage = s.textureStageState[i];
 			if (stage[1] == kTextureOpDisable) break;
 			const GLuint sampler = samplerFor(stage);
 			if (!sampler) return false;
-			glBindSampler(i, sampler);
+			if (g.stateCache.apply(g.stateCache.samplers[i], sampler))
+				glBindSampler(i, sampler);
 			if (!g.pendingTextures[i]) continue;
-			glActiveTexture(GL_TEXTURE0 + i);
-			glBindTexture(GL_TEXTURE_2D, g.pendingTextures[i]);
-			if (g.pendingProgram.samplers[i] >= 0)
-				glUniform1i(g.pendingProgram.samplers[i], GLint(i));
+			const GLenum textureUnit = GL_TEXTURE0 + i;
+			if (g.stateCache.apply(g.stateCache.activeTexture, uint32_t(textureUnit)))
+				glActiveTexture(textureUnit);
+			if (g.stateCache.apply(g.stateCache.textures[i], g.pendingTextures[i]))
+				glBindTexture(GL_TEXTURE_2D, g.pendingTextures[i]);
+			if (program.samplers[i] >= 0 && program.appliedSamplers[i].update(i))
+				glUniform1i(program.samplers[i], GLint(i));
 		}
-		if (s.renderState[7]) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
-		glDepthFunc(compare(s.renderState[23]));
-		glDepthMask(s.renderState[14] ? GL_TRUE : GL_FALSE);
+		const bool depthTest = s.renderState[7] != 0;
+		if (g.stateCache.apply(g.stateCache.depthTest, depthTest)) {
+			if (depthTest) glEnable(GL_DEPTH_TEST); else glDisable(GL_DEPTH_TEST);
+		}
+		const GLenum depthFunction = compare(s.renderState[23]);
+		if (g.stateCache.apply(g.stateCache.depthFunction, uint32_t(depthFunction))) glDepthFunc(depthFunction);
+		const bool depthWrite = s.renderState[14] != 0;
+		if (g.stateCache.apply(g.stateCache.depthWrite, depthWrite)) glDepthMask(depthWrite ? GL_TRUE : GL_FALSE);
 		if (s.renderState[27]) {
 			const GLenum src = blendFactor(s.renderState[19]), dst = blendFactor(s.renderState[20]);
 			if (!src || !dst) return false;
-			glEnable(GL_BLEND); glBlendFunc(src, dst);
-		} else glDisable(GL_BLEND);
-		if (s.renderState[22] == 1u) glDisable(GL_CULL_FACE);
-		else { glEnable(GL_CULL_FACE); glCullFace(GL_BACK); glFrontFace(s.renderState[22] == 2u ? GL_CCW : GL_CW); }
+			if (g.stateCache.apply(g.stateCache.blend, true)) glEnable(GL_BLEND);
+			if (g.stateCache.apply(g.stateCache.blendFunction, std::array<uint32_t, 2>{uint32_t(src), uint32_t(dst)}))
+				glBlendFunc(src, dst);
+		} else if (g.stateCache.apply(g.stateCache.blend, false)) glDisable(GL_BLEND);
+		const bool cull = s.renderState[22] != 1u;
+		if (g.stateCache.apply(g.stateCache.cull, cull)) {
+			if (cull) glEnable(GL_CULL_FACE); else glDisable(GL_CULL_FACE);
+		}
+		if (cull) {
+			if (g.stateCache.apply(g.stateCache.cullFace, uint32_t(GL_BACK))) glCullFace(GL_BACK);
+			const GLenum frontFace = s.renderState[22] == 2u ? GL_CCW : GL_CW;
+			if (g.stateCache.apply(g.stateCache.frontFace, uint32_t(frontFace))) glFrontFace(frontFace);
+		}
 		constexpr GLsizei stride = GLsizei(sizeof(GpuVertex));
 		if (!g.vertexBuffer) glGenBuffers(1, &g.vertexBuffer);
 		if (!g.vertexArray) glGenVertexArrays(1, &g.vertexArray);
 		if (!g.vertexBuffer || !g.vertexArray) return false;
-		glBindVertexArray(g.vertexArray);
-		glBindBuffer(GL_ARRAY_BUFFER, g.vertexBuffer);
+		if (g.stateCache.apply(g.stateCache.vertexArray, g.vertexArray)) glBindVertexArray(g.vertexArray);
+		if (g.stateCache.apply(g.stateCache.arrayBuffer, g.vertexBuffer)) glBindBuffer(GL_ARRAY_BUFFER, g.vertexBuffer);
 		if (!g.vertexArrayReady) {
 			for (GLuint loc = 0; loc < 11; ++loc) {
 				const GLint components = loc == 0 ? 4 : loc < 3 ? 4 : 2;
@@ -416,6 +450,7 @@ bool ensureDepthReadTarget(Target& t, uint32_t width, uint32_t height)
 {
 	if (!depthReadProgram()) return false;
 	if (!t.depthReadFbo) {
+		g.stateCache.invalidateBindings();
 		glGenFramebuffers(1, &t.depthReadFbo);
 		glGenTextures(1, &t.depthReadColor);
 		if (!t.depthReadFbo || !t.depthReadColor) return false;
@@ -426,6 +461,8 @@ bool ensureDepthReadTarget(Target& t, uint32_t width, uint32_t height)
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
 	}
 	if (t.depthReadWidth != width || t.depthReadHeight != height) {
+		g.stateCache.framebuffer.invalidate();
+		g.stateCache.invalidateTextureBindings();
 		glBindTexture(GL_TEXTURE_2D, t.depthReadColor);
 		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, GLsizei(width), GLsizei(height), 0,
 			GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
@@ -444,6 +481,7 @@ bool ensureTarget(const GpuDrawState& s, Target*& out)
 		s.depth.bitsPerPixel!=16u) return false;
 	auto& t=g.targets[s.target.handle];
 	if (!t.fbo) {
+		g.stateCache.invalidateBindings();
 		glGenFramebuffers(1,&t.fbo);glGenTextures(1,&t.color);glGenTextures(1,&t.depth);
 		glBindTexture(GL_TEXTURE_2D,t.color);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MIN_FILTER,GL_NEAREST);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_MAG_FILTER,GL_NEAREST);
 		glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_S,GL_CLAMP_TO_EDGE);glTexParameteri(GL_TEXTURE_2D,GL_TEXTURE_WRAP_T,GL_CLAMP_TO_EDGE);
@@ -471,7 +509,7 @@ bool ensureTexture(const GpuSurface& s, GLuint& id)
 		(uint64_t(s.height-1u)*s.pitch+uint64_t(s.width)*(s.bitsPerPixel/8u))>s.byteCount)return false;
 	auto& t=g.textures[s.handle];
 	if(!t.id){glGenTextures(1,&t.id);t.width=s.width;t.height=s.height;}
-	if(t.width!=s.width||t.height!=s.height){glDeleteTextures(1,&t.id);glGenTextures(1,&t.id);t.width=s.width;t.height=s.height;t.revision=UINT64_MAX;}
+	if(t.width!=s.width||t.height!=s.height){g.stateCache.invalidateTextureBindings();glDeleteTextures(1,&t.id);glGenTextures(1,&t.id);t.width=s.width;t.height=s.height;t.revision=UINT64_MAX;}
 	if(t.revision!=s.cpuRevision){
 		g.pixelData.resize(size_t(s.width)*s.height*4u);auto& rgba=g.pixelData;const uint32_t bpp=s.bitsPerPixel/8u;
 		#if defined(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS)
@@ -482,6 +520,7 @@ bool ensureTexture(const GpuSurface& s, GLuint& id)
 			content.add(p,bpp,d[0],d[1],d[2],d[3]);
 			#endif
 		}
+		g.stateCache.invalidateTextureBindings();
 		glBindTexture(GL_TEXTURE_2D,t.id);
 		// GLES defaults the minification filter to a mipmapped mode, which makes
 		// a level-zero-only texture incomplete. Match D3D7's point-filter default.
@@ -512,7 +551,7 @@ bool stageUsesTexture(const std::array<uint32_t, 32>& s)
 }
 
 #if defined(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS)
-uint64_t drawDiagnosticKey(const GpuDrawState& state) noexcept
+uint64_t drawDiagnosticKey(const GpuDrawState& state, const TextureUvProbe& uv) noexcept
 {
 	uint64_t hash = 14695981039346656037ull;
 	const auto add = [&hash](uint64_t value) {
@@ -523,6 +562,12 @@ uint64_t drawDiagnosticKey(const GpuDrawState& state) noexcept
 	add(state.guestCaller); add(state.guestFvf); add(state.target.handle);
 	add(state.activeTextureStages); add(state.viewportX); add(state.viewportY);
 	add(state.viewportWidth); add(state.viewportHeight);
+	add(uv.valid ? 1u : 0u);
+	if (uv.valid) {
+		const auto floatBits = [](float value) { uint32_t bits = 0u; std::memcpy(&bits, &value, sizeof(bits)); return bits; };
+		add(floatBits(uv.minU)); add(floatBits(uv.minV));
+		add(floatBits(uv.maxU)); add(floatBits(uv.maxV));
+	}
 	for (uint32_t stage = 0u; stage < state.activeTextureStages; ++stage) {
 		const GpuSurface& texture = state.textures[stage];
 		add(texture.handle); add(texture.cpuRevision); add(texture.width); add(texture.height);
@@ -534,10 +579,11 @@ uint64_t drawDiagnosticKey(const GpuDrawState& state) noexcept
 	return hash;
 }
 
-void logDrawTextureState(const GpuDrawState& state, uint32_t vertexCount)
+void logDrawTextureState(const GpuDrawState& state, uint32_t vertexCount, const GpuVertex* vertices)
 {
 	if (g.drawDiagnosticKeys.size() >= 256u) return;
-	const uint64_t key = drawDiagnosticKey(state);
+	const TextureUvProbe uv = probeTextureUv(state, vertices, vertexCount);
+	const uint64_t key = drawDiagnosticKey(state, uv);
 	if (!g.drawDiagnosticKeys.insert(key).second) return;
 	const auto textureInfo = [&state](uint32_t stage, uint32_t* handle, uint32_t* width,
 		uint32_t* height, uint32_t* bpp, uint32_t* revision) {
@@ -549,12 +595,16 @@ void logDrawTextureState(const GpuDrawState& state, uint32_t vertexCount)
 	uint32_t t0=0u,w0=0u,h0=0u,b0=0u,r0=0u,t1=0u,w1=0u,h1=0u,b1=0u,r1=0u;
 	textureInfo(0u,&t0,&w0,&h0,&b0,&r0); textureInfo(1u,&t1,&w1,&h1,&b1,&r1);
 	const auto& s0=state.textureStageState[0]; const auto& s1=state.textureStageState[1];
+	const uint32_t uvBlackPermille = uv.sampledPixels
+		? uv.blackPixels * 1000u / uv.sampledPixels : 0u;
 	br::runtime::androidDiagnosticLogEvent(ANDROID_LOG_INFO,"BattleRealmsNative","D3D7_DRAW_TEXTURE_STATE",
-		"caller=%08x fvf=%08x vertices=%u target=%08x size=%ux%u stages=%u texture0=%08x/%ux%u/%ubpp/rev%u texture1=%08x/%ux%u/%ubpp/rev%u stage0=%u,%u,%u,%u,%u,%u uv=%u stage1=%u,%u,%u,%u,%u,%u uv=%u",
+		"caller=%08x fvf=%08x vertices=%u target=%08x size=%ux%u stages=%u texture0=%08x/%ux%u/%ubpp/rev%u texture1=%08x/%ux%u/%ubpp/rev%u stage0=%u,%u,%u,%u,%u,%u uv=%u stage1=%u,%u,%u,%u,%u,%u uv=%u uv_range_valid=%u uv_unit=%u uv_min=%.6f,%.6f uv_max=%.6f,%.6f uv_region_pixels=%u uv_region_black=%u uv_region_black_permille=%u",
 		state.guestCaller,state.guestFvf,vertexCount,state.target.handle,state.target.width,state.target.height,
 		state.activeTextureStages,t0,w0,h0,b0,r0,t1,w1,h1,b1,r1,
 		s0[1],s0[2],s0[3],s0[4],s0[5],s0[6],s0[11]&0xffffu,
-		s1[1],s1[2],s1[3],s1[4],s1[5],s1[6],s1[11]&0xffffu);
+		s1[1],s1[2],s1[3],s1[4],s1[5],s1[6],s1[11]&0xffffu,
+		uv.valid ? 1u : 0u,uv.withinUnitRange ? 1u : 0u,
+		uv.minU,uv.minV,uv.maxU,uv.maxV,uv.sampledPixels,uv.blackPixels,uvBlackPermille);
 }
 #endif
 
@@ -589,12 +639,12 @@ bool renderGpuTriangles(const GpuDrawState& s,const GpuVertex* v,uint32_t count)
 		if (!g.vertexArray) glGenVertexArrays(1, &g.vertexArray);
 		if (!g.vertexBuffer || !g.vertexArray || glGetError() != GL_NO_ERROR) return false;
 		#if defined(BR_ANDROID_D3D7_TEXTURE_DIAGNOSTICS)
-		logDrawTextureState(s,count);
+		logDrawTextureState(s,count,v);
 		#endif
 		g.pendingVertices.clear();
 		if (!appendGpuVertices(g.pendingVertices, v, count)) return false;
 		g.pendingState = s;
-		g.pendingProgram = *program;
+		g.pendingProgram = program;
 		g.pendingTextures = textures;
 		g.batchPending = true;
 		return true;
@@ -626,6 +676,7 @@ bool synchronizeGpuSurface(const GpuSurface& s) noexcept
 		// In particular, an unsupported first GLES draw can safely fall back to
 		// software without turning a no-op synchronization into a fatal error.
 		if (!pending) return true;
+		g.stateCache.invalidateDrawState();
 		if (!ensureContext()) {
 			logSyncFailure("egl_context_unavailable", s.handle, s.width, s.height, s.bitsPerPixel,
 				s.pitch, s.byteCount, glGetError(), eglGetError());
@@ -718,6 +769,12 @@ uint64_t consumeGpuBackendSubmitNanoseconds() noexcept
 	const uint64_t total = g.batchSubmitNanoseconds;
 	g.batchSubmitNanoseconds = 0u;
 	return total;
+}
+uint64_t consumeGpuBackendSkippedStateCalls() noexcept
+{
+	const uint64_t count = g.stateCache.skippedCalls;
+	g.stateCache.skippedCalls = 0u;
+	return count;
 }
 void markGpuSurfaceCpuWrite(uint32_t h) noexcept
 {

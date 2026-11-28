@@ -4,6 +4,7 @@
 
 int main()
 {
+	using namespace br::runtime::d3d7;
 	br::runtime::d3d7::TextureContentProbe probe{};
 	probe.add(0x001fu, 2u, 0u, 0u, 255u, 255u);
 	probe.add(0x0000u, 2u, 0u, 0u, 0u, 0u);
@@ -18,6 +19,25 @@ int main()
 			static_cast<unsigned long long>(probe.opaqueBlackPixels),
 			probe.sourceFnv1a, probe.rgbaFnv1a);
 		return 1;
+	}
+	uint32_t pixels[16];
+	for (uint32_t& pixel : pixels) pixel = 0xffffffffu;
+	pixels[0] = pixels[1] = pixels[4] = 0xff000000u;
+	GpuDrawState draw{};
+	draw.activeTextureStages = 1u;
+	draw.textures[0] = {1u, 4u, 4u, 16u, 32u, 0x00ff0000u, 0x0000ff00u,
+		0x000000ffu, 0xff000000u, 1u, reinterpret_cast<uint8_t*>(pixels), sizeof(pixels)};
+	GpuVertex vertices[3]{};
+	vertices[0].texcoord[0] = {0.0f, 0.0f};
+	vertices[1].texcoord[0] = {0.5f, 0.0f};
+	vertices[2].texcoord[0] = {0.0f, 0.5f};
+	const TextureUvProbe uv = probeTextureUv(draw, vertices, 3u);
+	if (!uv.valid || !uv.withinUnitRange || uv.sampledPixels != 4u || uv.blackPixels != 3u ||
+		uv.minU != 0.0f || uv.minV != 0.0f || uv.maxU != 0.5f || uv.maxV != 0.5f) {
+		std::fprintf(stderr, "UV/black-region probe mismatch: valid=%u inside=%u samples=%u black=%u range=%.2f,%.2f..%.2f,%.2f\n",
+			uv.valid, uv.withinUnitRange, uv.sampledPixels, uv.blackPixels,
+			uv.minU, uv.minV, uv.maxU, uv.maxV);
+		return 2;
 	}
 	std::puts("PASS texture-source and converted-RGBA diagnostics");
 	return 0;

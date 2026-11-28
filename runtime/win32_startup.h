@@ -30,6 +30,7 @@ struct Win32FrameRenderStats {
 	uint64_t d3dFallbackNanoseconds = 0;
 	uint64_t d3dSyncReadbackNanoseconds = 0;
 	uint64_t gpuBackendSubmitNanoseconds = 0;
+	uint64_t gpuStateCallsSkipped = 0;
 };
 Win32FrameRenderStats consumeWin32FrameRenderStats();
 
